@@ -65,8 +65,8 @@ exports.storeChannelLead = async (req, res) => {
             if (createdAt.isAfter(ninetyDaysAgo)) {
                 // Lead is within 90 days — block creation
                 return await responseError(req, res, "Lead already exists with this email or phone within the last 90 days.");
-            } else if (leadData.lead_stg_id === 1) {
-                // Lead is old AND in stage 1 — update to stage 5 (Closed - Lost)
+            } else if (leadData.lead_stg_id != 4 || leadData.lead_stg_id != 5) {
+                // Lead is old AND NOT in stage 4 or 5 — update to stage 5 (Closed - Lost)
                 await leadData.update({ lead_stg_id: 5 });
             }
         }
