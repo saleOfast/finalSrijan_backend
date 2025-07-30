@@ -275,5 +275,3 @@ exports.getleadBooking = async (req, res) => {
         return await responseError(req, res, "bookingList fetching failed", error)
     }
 }
-
-
