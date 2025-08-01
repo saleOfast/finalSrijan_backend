@@ -182,7 +182,7 @@ exports.syncleadVisit = async (req, res) => {
 exports.SyncBooking = async (req, res) => {
     try {
         let bookingData = {};
-        let { sales_lead_id } = req.body
+        let { sales_lead_id, sales_booking_id } = req.body
         if (!sales_lead_id) return await responseError(req, res, "sales lead id is blank")
         let leadData = await req.config.leads.findOne({
             where: {
@@ -198,7 +198,10 @@ exports.SyncBooking = async (req, res) => {
             }
         })
 
-        if (existCount == 1 || existCount > 1) return await responseError(req, res, `booking alread exist with lead ${sales_lead_id}`)
+        if (existCount == 1 || existCount > 1) {
+            req.config.leadBooking.update({ sales_booking_id: sales_booking_id })
+            return await responseError(req, res, `booking alread exist with lead ${sales_lead_id}`)
+        }
         // Count the total number of leads (including soft-deleted ones)
         let leadcount = await req.config.leadBooking.count({ paranoid: false });
         bookingData.booking_code = `${req.admin.user.charAt(0).toUpperCase()}${req.admin.user_l_name ? req.admin.user_l_name.charAt(0).toUpperCase() : ''}B_${zeroPad(leadcount + 1, 5)}`

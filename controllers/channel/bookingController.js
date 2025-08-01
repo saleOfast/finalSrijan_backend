@@ -20,6 +20,7 @@ function getCurrentWeekEndDate() {
     endDate.setDate(endDate.getDate() + diff);
     return endDate.toISOString().split('T')[0]; // Format as yyyy-mm-dd
 }
+
 async function updateBookingStatuses(req, bookingData, currentDateTime) {
     // Filter booking records that are eligible for update
     const bookingIdsToUpdate = bookingData
