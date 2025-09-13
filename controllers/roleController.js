@@ -148,6 +148,359 @@ exports.deleteRole = async (req, res) => {
     }
 }
 
+// Role Management Functions for Frontend Interface
+
+// Get all platforms for role creation
+exports.getPlatforms = async (req, res) => {
+    try {
+        // Get distinct menu types from db_menu table
+        const platforms = await req.config.sequelize.query(
+            'SELECT DISTINCT menu_type FROM db_menus WHERE menu_type IS NOT NULL',
+            { type: req.config.sequelize.QueryTypes.SELECT }
+        );
+
+        return await responseSuccess(req, res, "Platforms fetched successfully", platforms);
+
+    } catch (error) {
+        logErrorToFile(error)
+        return await responseError(req, res, "Something Went Wrong");
+    }
+};
+
+// Get hierarchical menus by platform type
+exports.getMenusByPlatform = async (req, res) => {
+    try {
+        const { platform_type } = req.params;
+        
+        if (!platform_type) {
+            return await responseError(req, res, "Platform type is required");
+        }
+
+        // Get all menus for the platform, ordered by hierarchy
+        const menus = await req.config.db_menu.findAll({
+            where: {
+                menu_type: platform_type,
+                is_active: true
+            },
+            order: [
+                ['parent_id', 'ASC'],
+                ['menu_order', 'ASC'],
+                ['menu_id', 'ASC']
+            ],
+            attributes: ['menu_id', 'menu_name', 'parent_id', 'link', 'icon_path', 'menu_order']
+        });
+
+        // Build hierarchical structure
+        const menuHierarchy = buildMenuHierarchy(menus);
+
+        return await responseSuccess(req, res, "Menus fetched successfully", menuHierarchy);
+
+    } catch (error) {
+        logErrorToFile(error)
+        return await responseError(req, res, "Something Went Wrong");
+    }
+};
+
+// Get existing role permissions for editing
+exports.getRolePermissions = async (req, res) => {
+    try {
+        const { role_id } = req.params;
+        
+        if (!role_id) {
+            return await responseError(req, res, "Role ID is required");
+        }
+
+        // Get role details
+        const role = await req.config.user_role.findOne({
+            where: { role_id },
+            attributes: ['role_id', 'role_name', 'platform_id']
+        });
+
+        if (!role) {
+            return await responseError(req, res, "Role not found");
+        }
+
+        // Get role's permissions
+        const permissions = await req.config.role_permissions.findAll({
+            where: { role_id, actions: true },
+            attributes: ['menu_id']
+        });
+
+        const permittedMenuIds = permissions.map(p => p.menu_id);
+
+        // Get platform type from role's platform or default to CHANNEL
+        let platformType = 'CHANNEL'; // default
+        if (role.platform_id) {
+            const platform = await req.config.db_platform.findOne({
+                where: { platform_id: role.platform_id },
+                attributes: ['platform_type']
+            });
+            if (platform) {
+                platformType = platform.platform_type;
+            }
+        }
+
+        // Get all menus for the platform
+        const menus = await req.config.db_menu.findAll({
+            where: {
+                menu_type: platformType,
+                is_active: true
+            },
+            order: [
+                ['parent_id', 'ASC'],
+                ['menu_order', 'ASC'],
+                ['menu_id', 'ASC']
+            ],
+            attributes: ['menu_id', 'menu_name', 'parent_id', 'link', 'icon_path', 'menu_order']
+        });
+
+        // Build hierarchical structure with permission status
+        const menuHierarchy = buildMenuHierarchyWithPermissions(menus, permittedMenuIds);
+
+        return await responseSuccess(req, res, "Role permissions fetched successfully", {
+            role,
+            platform_type: platformType,
+            menus: menuHierarchy,
+            permitted_menu_ids: permittedMenuIds
+        });
+
+    } catch (error) {
+        logErrorToFile(error)
+        return await responseError(req, res, "Something Went Wrong");
+    }
+};
+
+// Create role with selected permissions
+exports.createRoleWithPermissions = async (req, res) => {
+    try {
+        const { role_name, platform_type, selected_menu_ids } = req.body;
+        
+        if (!role_name || !platform_type) {
+            return await responseError(req, res, "Role name and platform type are required");
+        }
+
+        const now = new Date();
+
+        // Check if role already exists
+        const existingRole = await req.config.user_role.findOne({
+            where: { role_name }
+        });
+
+        if (existingRole) {
+            return await responseError(req, res, "Role with this name already exists");
+        }
+
+        // Create the role
+        const newRole = await req.config.user_role.create({
+            role_name,
+            platform_id: null, // Will be set based on platform_type if needed
+            createdAt: now,
+            updatedAt: now
+        });
+
+        // Create permissions for selected menus
+        if (selected_menu_ids && selected_menu_ids.length > 0) {
+            const permissions = selected_menu_ids.map(menu_id => ({
+                role_id: newRole.role_id,
+                menu_id,
+                actions: true,
+                createdAt: now,
+                updatedAt: now
+            }));
+
+            await req.config.role_permissions.bulkCreate(permissions);
+
+            // Ensure parent menu access for hierarchical consistency
+            await ensureParentMenuAccess(newRole.role_id, selected_menu_ids, req);
+        }
+
+        return await responseSuccess(req, res, "Role created successfully with permissions", {
+            role_id: newRole.role_id,
+            role_name: newRole.role_name,
+            permissions_count: selected_menu_ids ? selected_menu_ids.length : 0
+        });
+
+    } catch (error) {
+        logErrorToFile(error)
+        return await responseError(req, res, "Something Went Wrong");
+    }
+};
+
+// Update role permissions
+exports.updateRolePermissions = async (req, res) => {
+    try {
+        const { role_id, selected_menu_ids } = req.body;
+        
+        if (!role_id) {
+            return await responseError(req, res, "Role ID is required");
+        }
+
+        // Check if role exists
+        const role = await req.config.user_role.findOne({
+            where: { role_id }
+        });
+
+        if (!role) {
+            return await responseError(req, res, "Role not found");
+        }
+
+        const now = new Date();
+
+        // Remove existing permissions
+        await req.config.role_permissions.destroy({
+            where: { role_id }
+        });
+
+        // Create new permissions
+        if (selected_menu_ids && selected_menu_ids.length > 0) {
+            const permissions = selected_menu_ids.map(menu_id => ({
+                role_id,
+                menu_id,
+                actions: true,
+                createdAt: now,
+                updatedAt: now
+            }));
+
+            await req.config.role_permissions.bulkCreate(permissions);
+
+            // Ensure parent menu access for hierarchical consistency
+            await ensureParentMenuAccess(role_id, selected_menu_ids, req);
+        }
+
+        return await responseSuccess(req, res, "Role permissions updated successfully", {
+            role_id,
+            permissions_count: selected_menu_ids ? selected_menu_ids.length : 0
+        });
+
+    } catch (error) {
+        logErrorToFile(error)
+        return await responseError(req, res, "Something Went Wrong");
+    }
+};
+
+// Helper function to build menu hierarchy
+function buildMenuHierarchy(menus) {
+    const menuMap = {};
+    const rootMenus = [];
+
+    // Create menu map
+    menus.forEach(menu => {
+        menuMap[menu.menu_id] = {
+            ...menu.toJSON(),
+            children: [],
+            is_selected: false
+        };
+    });
+
+    // Build hierarchy
+    menus.forEach(menu => {
+        const menuItem = menuMap[menu.menu_id];
+        if (menu.parent_id === 0 || !menuMap[menu.parent_id]) {
+            rootMenus.push(menuItem);
+        } else {
+            menuMap[menu.parent_id].children.push(menuItem);
+        }
+    });
+
+    return rootMenus;
+}
+
+// Helper function to build menu hierarchy with permissions
+function buildMenuHierarchyWithPermissions(menus, permittedMenuIds) {
+    const menuMap = {};
+    const rootMenus = [];
+
+    // Create menu map with permission status
+    menus.forEach(menu => {
+        menuMap[menu.menu_id] = {
+            ...menu.toJSON(),
+            children: [],
+            is_selected: permittedMenuIds.includes(menu.menu_id),
+            is_indeterminate: false
+        };
+    });
+
+    // Build hierarchy and calculate indeterminate states
+    menus.forEach(menu => {
+        const menuItem = menuMap[menu.menu_id];
+        if (menu.parent_id === 0 || !menuMap[menu.parent_id]) {
+            rootMenus.push(menuItem);
+        } else {
+            menuMap[menu.parent_id].children.push(menuItem);
+        }
+    });
+
+    // Calculate indeterminate states for parent menus
+    function calculateIndeterminate(menuItem) {
+        if (menuItem.children.length === 0) return;
+
+        const selectedChildren = menuItem.children.filter(child => child.is_selected).length;
+        const totalChildren = menuItem.children.length;
+
+        if (selectedChildren === 0) {
+            menuItem.is_selected = false;
+            menuItem.is_indeterminate = false;
+        } else if (selectedChildren === totalChildren) {
+            menuItem.is_selected = true;
+            menuItem.is_indeterminate = false;
+        } else {
+            menuItem.is_selected = false;
+            menuItem.is_indeterminate = true;
+        }
+
+        // Recursively calculate for children
+        menuItem.children.forEach(calculateIndeterminate);
+    }
+
+    rootMenus.forEach(calculateIndeterminate);
+
+    return rootMenus;
+}
+
+// Helper function to ensure parent menu access
+async function ensureParentMenuAccess(roleId, menuIds, req) {
+    const parentMenus = new Set();
+    
+    for (let menuId of menuIds) {
+        // Get parent menu chain
+        let currentMenu = await req.config.db_menu.findByPk(menuId);
+        while (currentMenu && currentMenu.parent_id > 0) {
+            const parentMenu = await req.config.db_menu.findByPk(currentMenu.parent_id);
+            if (parentMenu && !menuIds.includes(parentMenu.menu_id)) {
+                parentMenus.add(parentMenu.menu_id);
+                currentMenu = parentMenu;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Add parent menu permissions if they don't exist
+    if (parentMenus.size > 0) {
+        const existingPermissions = await req.config.role_permissions.findAll({
+            where: {
+                role_id: roleId,
+                menu_id: Array.from(parentMenus)
+            },
+            attributes: ['menu_id']
+        });
+
+        const existingMenuIds = existingPermissions.map(p => p.menu_id);
+        const newParentMenus = Array.from(parentMenus).filter(menuId => !existingMenuIds.includes(menuId));
+
+        if (newParentMenus.length > 0) {
+            const parentPermissions = newParentMenus.map(menuId => ({
+                role_id: roleId,
+                menu_id: menuId,
+                actions: true,
+                createdAt: new Date(),
+                updatedAt: new Date()
+            }));
+
+            await req.config.role_permissions.bulkCreate(parentPermissions);
+        }
+    }
+}
 
 // let myVariable = `
 // INSERT INTO db_role_permissions (role_id, menu_id, actions, createdAt, updatedAt, deletedAt ) VALUES

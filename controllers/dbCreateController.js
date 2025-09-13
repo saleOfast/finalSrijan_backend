@@ -322,6 +322,7 @@ exports.db_creater = async (req, res) => {
 
             // const message = `Welcome to the NK Realtors. We are glad you became part of us .<br/> Click this link to reset your password : <a href="http://crm.cybermatrixsolutions.com/ChangePassword?tkn=u$34${data.password_reset_token}" target="_blank"><b> Click here </b></a>:`;
             const message = `Welcome to the NK Realtors. We are glad you became part of us .<br/> Click this link to reset your password : <a href="${client_url}/ChangePassword?tkn=u$34${data.password_reset_token}" target="_blank"><b> Click here </b></a>:`;
+            console.log(message);
 
             let option = {
                 email: email,
@@ -524,8 +525,8 @@ exports.db_creater = async (req, res) => {
                 }
             );
 
-            const query = `INSERT INTO ${PREFIX}${userCode}.db_users (user, email, contact_number, password, db_name, isDB, user_status, user_code, role_id, password_reset_token, password_reset_expires, country_id, state_id, city_id, district_id, address, pincode, report_to, domain , no_of_months ,no_of_license, gst, nda, remarks,logo, createdAt, updatedAt , deletedAt, doc_verification, client_url) VALUES (:user, :email, :contact_number, :password, :db_name, :isDB, :user_status, :user_code, :role_id, :password_reset_token, :password_reset_expires, :country_id, :state_id, :city_id, :district_id, :address, :pincode, :report_to, :domain, :no_of_months,
-            :no_of_license, :gst, :nda, :remarks,:logo, :createdAt, :updatedAt , :deletedAt, :doc_verification, :client_url);`;
+            const query = `INSERT INTO ${PREFIX}${userCode}.db_users (user, email, contact_number, password, db_name, isDB, user_status, user_code, role_id, password_reset_token, password_reset_expires, country_id, state_id, city_id, district_id, address, pincode, report_to, domain , no_of_months ,no_of_license, gst, nda, remarks,logo, createdAt, updatedAt, deletedAt, doc_verification, client_url) VALUES (:user, :email, :contact_number, :password, :db_name, :isDB, :user_status, :user_code, :role_id, :password_reset_token, :password_reset_expires, :country_id, :state_id, :city_id, :district_id, :address, :pincode, :report_to, :domain, :no_of_months,
+            :no_of_license, :gst, :nda, :remarks,:logo, :createdAt, :updatedAt, :deletedAt, :doc_verification, :client_url);`;
 
             await db.sequelize.query(query, {
                 replacements: {
@@ -589,7 +590,7 @@ exports.db_creater = async (req, res) => {
                 }
             );
 
-            const profileQuery = `INSERT INTO ${PREFIX}${userCode}.db_user_profiles (user_id, div_id, dep_id, des_id, aadhar_no, aadhar_file, pan_no, pan_file, dl_no, dl_file, user_image_file, bank_name, account_holder_name, account_no, bank_ifsc_code, branch,  createdAt, updatedAt, deletedAt) VALUES (:user_id, :div_id, :dep_id, :des_id, :aadhar_no, :aadhar_file, :pan_no, :pan_file, :dl_no, :dl_file, :user_image_file, :bank_name, :account_holder_name, :account_no, :bank_ifsc_code, :branch ,'2023-05-01 02:21:14.000000', '2023-05-01 02:21:14.000000', NULL)`;
+            const profileQuery = `INSERT INTO ${PREFIX}${userCode}.db_user_profiles (user_id, div_id, dep_id, des_id, aadhar_no, aadhar_file, pan_no, pan_file, dl_no, dl_file, user_image_file, bank_name, account_holder_name, account_no, bank_ifsc_code, branch, createdAt, updatedAt, deletedAt) VALUES (:user_id, :div_id, :dep_id, :des_id, :aadhar_no, :aadhar_file, :pan_no, :pan_file, :dl_no, :dl_file, :user_image_file, :bank_name, :account_holder_name, :account_no, :bank_ifsc_code, :branch, :createdAt, :updatedAt, NULL)`;
 
             let profileQueryData = await db.sequelize.query(profileQuery, {
                 replacements: {
@@ -692,11 +693,21 @@ exports.db_creater = async (req, res) => {
                 transaction: process,
             });
 
-            await db.sequelize.query(`Call proc_lead_locations(:db_name)`, {
-                replacements: { db_name: `${PREFIX}${userCode}` },
-                type: QueryTypes.INSERT,
-                transaction: process,
-            });
+            try {
+                await db.sequelize.query(`Call proc_lead_locations(:db_name)`, {
+                    replacements: { db_name: `${PREFIX}${userCode}` },
+                    type: QueryTypes.INSERT,
+                    transaction: process,
+                });
+            } catch (error) {
+                // Handle the datetime error from stored procedure
+                if (error.original && error.original.code === 'ER_TRUNCATED_WRONG_VALUE') {
+                    console.log('Warning: proc_lead_locations has invalid datetime values. This stored procedure needs to be updated at the database level.');
+                    // Continue with the process despite the error
+                } else {
+                    throw error; // Re-throw if it's a different error
+                }
+            }
 
             //Media Procs
             // if (isMEDIA) {

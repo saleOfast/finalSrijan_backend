@@ -3,7 +3,8 @@ const cors = require("cors");
 const cluster = require("cluster");
 const os = require("os");
 const bodyParser = require("body-parser");
-const dotenv = require("dotenv").config();
+require('dotenv').config();
+const PORT = process.env.PORT || 3000;
 const cookieParser = require("cookie-parser");
 const fileUpload = require("express-fileupload");
 const errorLogger = require('./helper/errorLogger')
@@ -86,8 +87,7 @@ const emailTemplates = require("./routes/emailTemplateRoutes");
 
 const path = require("path");
 
-//setting up your port
-const PORT = process.env.PORT || 8090;
+// Port is already defined at the top of the file
 
 //assigning the variable app to express
 const app = express();
@@ -229,4 +229,7 @@ app.use("/api/v1/db/organisation", organisation);
 app.use("/api/v1/db/emailTemplates", emailTemplates);
 
 
-app.listen(PORT, () => console.log(`Server is connected on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Press Ctrl+C to stop the server`);
+});

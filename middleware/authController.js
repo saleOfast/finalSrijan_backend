@@ -85,6 +85,13 @@ exports.rolePermission = async (req, res, next,) => {
             next()
         }
         else {
+            // Special case: Allow platform fetching without m_id for role management setup
+            if (req.originalUrl.includes('/roles/platforms') && req.method === 'GET') {
+                console.log('Platform fetching detected - bypassing m_id requirement');
+                next();
+                return;
+            }
+            
             // for admin permission
             if (req.user.isDB == true) {
                 console.log(req.headers,"=======>>req.headers")

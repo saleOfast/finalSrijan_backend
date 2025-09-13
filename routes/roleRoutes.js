@@ -18,4 +18,25 @@ router
     .route("/one")
         .get(resolver, rolePermission, roleController.getRoleOne)
 
+// Role Management Routes for Frontend Interface
+router
+    .route("/platforms")
+        .get(resolver, rolePermission, roleController.getPlatforms)
+
+router
+    .route("/menus/:platform_type")
+        .get(resolver, rolePermission, roleController.getMenusByPlatform)
+
+router
+    .route("/permissions/:role_id")
+        .get(resolver, rolePermission, roleController.getRolePermissions)
+
+router
+    .route("/create-with-permissions")
+        .post(resolver, rolePermission, roleController.createRoleWithPermissions)
+
+router
+    .route("/update-permissions")
+        .put(resolver, rolePermission, roleController.updateRolePermissions)
+
 module.exports = router;
