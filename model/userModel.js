@@ -279,6 +279,11 @@ module.exports = (sequelize, DataTypes) => {
                 onUpdate: 'CASCADE',
             },
 
+            cp_category: {
+                type: DataTypes.ENUM('Category A', 'Category B', 'Category C', 'Category D'),
+                allowNull: true,
+            },
+
             salesforce_url: {
                 type: DataTypes.STRING,
                 allowNull: true,

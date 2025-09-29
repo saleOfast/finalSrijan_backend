@@ -30,8 +30,112 @@ function getCurrentWeekEndDate() {
 exports.storeChannelLead = async (req, res) => {
     try {
         // Destructuring request body
-        let { lead_name, email_id, p_contact_no, address, pincode, p_visit_date, p_visit_time, project_id, project_name, created_on, updated_on } = req.body;
+        let { lead_name, email_id, p_contact_no, address, pincode, p_visit_date, p_visit_time, project_id, project_name, created_on, updated_on, zone, zone_area, aadhar_card_number } = req.body;
         let leadData;
+
+        // Date validation: Admin users can book for any date, others only for current date or next calendar date
+        if (p_visit_date) {
+            const isAdmin = req.user.role_id === 2 || req.user.role_id === 3;
+            
+            if (!isAdmin) {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                
+                // Parse the visit date properly - handle different date formats
+                let visitDate;
+                if (typeof p_visit_date === 'string') {
+                    // Try parsing as dd-MM-YYYY format first (since this is the format from req.body)
+                    if (p_visit_date.includes('-')) {
+                        const parts = p_visit_date.split('-').map(Number);
+                        // Check if it's dd-MM-YYYY format (day first, then month, then year)
+                        if (parts.length === 3 && parts[2] > 1000) { // Year is 4 digits
+                            visitDate = new Date(parts[2], parts[1] - 1, parts[0]); // dd-MM-YYYY
+                        } else {
+                            // Fallback to YYYY-MM-DD format
+                            visitDate = new Date(parts[0], parts[1] - 1, parts[2]); // YYYY-MM-DD
+                        }
+                    } else if (p_visit_date.includes('/')) {
+                        // Try parsing as MM/DD/YYYY or DD/MM/YYYY format
+                        const parts = p_visit_date.split('/').map(Number);
+                        if (parts[2] > 31) { // Assume year is last if it's > 31
+                            visitDate = new Date(parts[2], parts[0] - 1, parts[1]); // MM/DD/YYYY
+                        } else {
+                            visitDate = new Date(parts[2], parts[1] - 1, parts[0]); // DD/MM/YYYY
+                        }
+                    } else {
+                        visitDate = new Date(p_visit_date);
+                    }
+                } else {
+                    visitDate = new Date(p_visit_date);
+                }
+                
+                // Check if the parsed date is valid
+                if (isNaN(visitDate.getTime())) {
+                    return await responseError(req, res, "Invalid date format provided");
+                }
+                
+                // Create a copy of the visitDate for comparison to avoid modifying the original
+                const visitDateCopy = new Date(visitDate);
+                visitDateCopy.setHours(0, 0, 0, 0);
+                
+                // Check if visit date is valid (today or tomorrow only for non-admin users)
+                const todayTime = today.getTime();
+                const tomorrowTime = tomorrow.getTime();
+                const visitTime = visitDateCopy.getTime();
+                
+                if (visitTime !== todayTime && visitTime !== tomorrowTime) {
+                    return await responseError(req, res, "Visit request can only be created for Today and Tomorrow");
+                }
+                
+                // Format the date properly for database insertion (MySQL expects YYYY-MM-DD)
+                let dbVisitDate;
+                if (visitDate && !isNaN(visitDate.getTime())) {
+                    const year = visitDate.getFullYear();
+                    const month = String(visitDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(visitDate.getDate()).padStart(2, '0');
+                    dbVisitDate = `${year}-${month}-${day}`;
+                    
+                    // Additional validation to ensure we have a valid date
+                    if (!dbVisitDate || dbVisitDate === 'NaN-NaN-NaN') {
+                        delete body.p_visit_date;
+                    }
+                } else {
+                    // If we somehow get here with an invalid date, don't update the visit date
+                    delete body.p_visit_date;
+                }
+                
+                // Update the p_visit_date in the body with the properly formatted date
+                p_visit_date = dbVisitDate;
+            }
+            
+            // Debug logging
+            console.log('Lead Date Validation Debug:');
+            console.log('p_visit_date:', p_visit_date);
+            console.log('today:', today.toISOString());
+            console.log('tomorrow:', tomorrow.toISOString());
+            console.log('visitDate:', visitDate.toISOString());
+            
+            // Check if visit date is valid (today or tomorrow only for non-admin users)
+            const todayTime = today.getTime();
+            const tomorrowTime = tomorrow.getTime();
+            const visitTime = visitDate.getTime();
+            
+            console.log('todayTime:', todayTime);
+            console.log('tomorrowTime:', tomorrowTime);
+            console.log('visitTime:', visitTime);
+            console.log('User role_id:', req.user.role_id);
+            console.log('Is admin:', isAdmin);
+            
+            if (visitTime !== todayTime && visitTime !== tomorrowTime) {
+                console.log('Validation failed - date not today or tomorrow');
+                return await responseError(req, res, "Visit request can only be created for Today and Tomorrow");
+            } else {
+                console.log('Validation passed - date is today or tomorrow');
+            }
+        }
 
         if (!p_contact_no || p_contact_no.trim() === "" || isNaN(Number(p_contact_no))) {
             p_contact_no = null;
@@ -91,6 +195,9 @@ exports.storeChannelLead = async (req, res) => {
             lead_stg_id: 1,
             created_on,
             updated_on,
+            zone,
+            zone_area,
+            aadhar_card_number,
             lead_code: `${req.admin.user.charAt(0).toUpperCase()}${req.admin.user_l_name ? req.admin.user_l_name.charAt(0).toUpperCase() : ''}L_${zeroPad(leadcount + 1, 5)}`
         };
 
@@ -316,41 +423,219 @@ exports.getleads = async (req, res) => {
     }
 }
 
+// exports.editleads = async (req, res) => {
+//     try {
+
+//         let { lead_id, email_id, p_contact_no, p_visit_date, p_visit_time, project_id, project_name, zone, zone_area } = req.body
+//         let body = req.body
+
+//         // Role-based field validation
+//         const isAdmin = req.user.role_id === 2 || req.user.role_id === 3;
+        
+//         if (!isAdmin) {
+//             // Non-admin users cannot edit these fields
+//             // const restrictedFields = ['project_id', 'project_name', 'zone', 'zone_area'];
+//             // const attemptedRestrictedEdits = restrictedFields.filter(field => req.body[field] !== undefined);
+            
+//             // if (attemptedRestrictedEdits.length > 0) {
+//             //     return await responseError(req, res, `You don't have permission to edit: ${attemptedRestrictedEdits.join(', ')}`);
+//             // }
+            
+//             // Date validation for non-admin users - only allow today and tomorrow
+//             if (p_visit_date) {
+//                 const today = new Date();
+//                 today.setHours(0, 0, 0, 0);
+                
+//                 const tomorrow = new Date(today);
+//                 tomorrow.setDate(tomorrow.getDate() + 1);
+                
+//                 // Parse the visit date properly - handle different date formats
+//                 let visitDate;
+//                 if (typeof p_visit_date === 'string') {
+//                     if (p_visit_date.includes('-')) {
+//                         const parts = p_visit_date.split('-').map(Number);
+//                         if (parts.length === 3 && parts[2] > 1000) { // dd-MM-YYYY format
+//                             visitDate = new Date(parts[2], parts[1] - 1, parts[0]);
+//                         } else { // YYYY-MM-DD format
+//                             visitDate = new Date(parts[0], parts[1] - 1, parts[2]);
+//                         }
+//                     } else if (p_visit_date.includes('/')) {
+//                         const parts = p_visit_date.split('/').map(Number);
+//                         if (parts[2] > 31) { // MM/DD/YYYY format
+//                             visitDate = new Date(parts[2], parts[0] - 1, parts[1]);
+//                         } else { // DD/MM/YYYY format
+//                             visitDate = new Date(parts[2], parts[1] - 1, parts[0]);
+//                         }
+//                     } else {
+//                         visitDate = new Date(p_visit_date);
+//                     }
+//                 } else {
+//                     visitDate = new Date(p_visit_date);
+//                 }
+                
+//                 // Check if the parsed date is valid
+//                 if (isNaN(visitDate.getTime())) {
+//                     return await responseError(req, res, "Invalid date format provided");
+//                 }
+                
+//                 // Create a copy of the visitDate for comparison to avoid modifying the original
+//                 const visitDateCopy = new Date(visitDate);
+//                 visitDateCopy.setHours(0, 0, 0, 0);
+                
+//                 // Check if visit date is valid (today or tomorrow only for non-admin users)
+//                 const todayTime = today.getTime();
+//                 const tomorrowTime = tomorrow.getTime();
+//                 const visitTime = visitDateCopy.getTime();
+                
+//                 if (visitTime !== todayTime && visitTime !== tomorrowTime) {
+//                     return await responseError(req, res, "Visit request can only be created for Today and Tomorrow");
+//                 }
+                
+//                 // Format the date properly for database insertion (MySQL expects YYYY-MM-DD)
+//                 let dbVisitDate;
+//                 if (visitDate && !isNaN(visitDate.getTime())) {
+//                     const year = visitDate.getFullYear();
+//                     const month = String(visitDate.getMonth() + 1).padStart(2, '0');
+//                     const day = String(visitDate.getDate()).padStart(2, '0');
+//                     dbVisitDate = `${year}-${month}-${day}`;
+                    
+//                     // Additional validation to ensure we have a valid date
+//                     if (!dbVisitDate || dbVisitDate === 'NaN-NaN-NaN') {
+//                         delete body.p_visit_date;
+//                     }
+//                 } else {
+//                     // If we somehow get here with an invalid date, don't update the visit date
+//                     delete body.p_visit_date;
+//                 }
+                
+//                 // Update the p_visit_date in the body with the properly formatted date
+//                 body.p_visit_date = dbVisitDate;
+//             }
+//         }
+
+//         if (!p_contact_no || p_contact_no == "" || Number(p_contact_no) == NaN) {
+//             p_contact_no = null
+//         }
+
+//         let leadData = await req.config.leads.findByPk(lead_id)
+//         if (!leadData) return await responseError(req, res, "no lead existed")
+
+//         let leadDuplicateData = await req.config.leads.findOne({
+//             where: {
+//                 lead_id: { [Op.ne]: lead_id },
+//                 [Op.or]: [
+//                     { email_id }, { p_contact_no }
+//                 ]
+//             }
+//         })
+//         if (leadDuplicateData) return await responseError(req, res, "Lead already exists with this email or phone ")
+//         body.sales_project_id = project_id
+//         body.sales_project_name = project_name
+//         delete body.project_id
+
+//         // Final validation: Remove any invalid date values before database update
+//         if (body.p_visit_date === 'Invalid date' || body.p_visit_date === 'NaN-NaN-NaN' || !body.p_visit_date) {
+//             delete body.p_visit_date;
+//         }
+
+//         await leadData.update(body)
+//         return await responseSuccess(req, res, "lead updated")
+
+//     } catch (error) {
+//         logErrorToFile(error)
+//         console.log("error", error)
+//         return await responseError(req, res, "lead updated failed")
+//     }
+// }
+
+
 exports.editleads = async (req, res) => {
     try {
+        let { lead_id, email_id, p_contact_no, p_visit_date, p_visit_time, project_id, project_name, zone, zone_area } = req.body;
+        let body = req.body;
 
-        let { lead_id, email_id, p_contact_no, p_visit_date, p_visit_time, project_id, project_name } = req.body
-        let body = req.body
+        // Role-based field validation
+        const isAdmin = req.user.role_id === 2 || req.user.role_id === 3;
 
-        if (!p_contact_no || p_contact_no == "" || Number(p_contact_no) == NaN) {
-            p_contact_no = null
+        if (!isAdmin) {
+            // Non-admin users - date validation
+            if (p_visit_date) {
+                // Try to parse date in supported formats
+                let visitDate = moment(p_visit_date, ["DD-MM-YYYY", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY"], true);
+
+                if (!visitDate.isValid()) {
+                    return await responseError(req, res, "Invalid date format provided");
+                }
+
+                // Allow only today or tomorrow
+                const today = moment().startOf("day");
+                const tomorrow = moment().add(1, "day").startOf("day");
+
+                if (
+                    !visitDate.isSame(today, "day") &&
+                    !visitDate.isSame(tomorrow, "day")
+                ) {
+                    return await responseError(
+                        req,
+                        res,
+                        "Visit request can only be created for Today and Tomorrow"
+                    );
+                }
+
+                // Format for MySQL (YYYY-MM-DD)
+                body.p_visit_date = visitDate.format("YYYY-MM-DD");
+            }
+        } else {
+            // Admins can still have date validation
+            if (p_visit_date) {
+                let visitDate = moment(p_visit_date, ["DD-MM-YYYY", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY"], true);
+
+                if (visitDate.isValid()) {
+                    body.p_visit_date = visitDate.format("YYYY-MM-DD");
+                } else {
+                    delete body.p_visit_date; // avoid inserting "Invalid date"
+                }
+            }
         }
 
-        let leadData = await req.config.leads.findByPk(lead_id)
-        if (!leadData) return await responseError(req, res, "no lead existed")
+        // Phone validation
+        if (!p_contact_no || p_contact_no === "" || isNaN(Number(p_contact_no))) {
+            p_contact_no = null;
+        }
 
+        // Find lead
+        let leadData = await req.config.leads.findByPk(lead_id);
+        if (!leadData) return await responseError(req, res, "no lead existed");
+
+        // Check duplicates
         let leadDuplicateData = await req.config.leads.findOne({
             where: {
                 lead_id: { [Op.ne]: lead_id },
-                [Op.or]: [
-                    { email_id }, { p_contact_no }
-                ]
-            }
-        })
-        if (leadDuplicateData) return await responseError(req, res, "Lead already exists with this email or phone ")
-        body.sales_project_id = project_id
-        body.sales_project_name = project_name
-        delete body.project_id
+                [Op.or]: [{ email_id }, { p_contact_no }],
+            },
+        });
+        if (leadDuplicateData)
+            return await responseError(req, res, "Lead already exists with this email or phone");
 
-        await leadData.update(body)
-        return await responseSuccess(req, res, "lead updated")
+        // Map project fields
+        body.sales_project_id = project_id;
+        body.sales_project_name = project_name;
+        delete body.project_id;
 
+        // Final cleanup: if date still invalid, remove it
+        if (!body.p_visit_date) {
+            delete body.p_visit_date;
+        }
+
+        await leadData.update(body);
+        return await responseSuccess(req, res, "lead updated");
     } catch (error) {
-        logErrorToFile(error)
-        console.log("error", error)
-        return await responseError(req, res, "lead updated failed")
+        logErrorToFile(error);
+        console.log("error", error);
+        return await responseError(req, res, "lead update failed");
     }
-}
+};
+
 
 exports.deleteleads = async (req, res) => {
     try {

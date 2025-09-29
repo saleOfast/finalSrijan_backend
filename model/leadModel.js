@@ -245,6 +245,21 @@
 			type: DataTypes.BOOLEAN,
 			allowNull: true,
 		},
+
+		zone: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
+
+		zone_area: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
+
+		aadhar_card_number: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
 	},
 	{ paranoid: true, timestamps: true },   
 	);

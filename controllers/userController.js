@@ -3035,6 +3035,8 @@ exports.resendEmailToPendingUser = async (req, res) => {
             );
 
             const signupLink = `${req.admin.client_url}/partner/Signup?token=${registrationToken}`;
+            console.log("111",signupLink);
+            
 
             // const htmlTemplatePath = path.join(
             //     __dirname,

@@ -528,6 +528,23 @@ const userValidationRules = (params) => {
           .withMessage("Please choose lead owner")
           .isNumeric()
           .withMessage("Please enter a valid lead owner"),
+
+        check("zone")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter zone"),
+
+        check("zone_area")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter zone area"),
+
+        check("aadhar_card_number")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter aadhar card number")
+          .matches(/^\d{12}$/)
+          .withMessage("Please enter a valid 12-digit aadhar card number"),
       ];
 
     case "editLead":
@@ -555,6 +572,23 @@ const userValidationRules = (params) => {
           .withMessage("Please choose lead owner")
           .isNumeric()
           .withMessage("Please enter a valid lead owner"),
+
+        check("zone")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter zone"),
+
+        check("zone_area")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter zone area"),
+
+        check("aadhar_card_number")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter aadhar card number")
+          .matches(/^\d{12}$/)
+          .withMessage("Please enter a valid 12-digit aadhar card number"),
       ];
 
     case "editLeadAssign":
@@ -1155,8 +1189,27 @@ const userValidationRules = (params) => {
         check("address").notEmpty().withMessage("Please enter address"),
         check("project_id").notEmpty().withMessage("Please choose project name"),
         check("email_id").notEmpty().withMessage("Please enter email_id").isEmail().withMessage('Please enter valid email'),
-        // check("p_contact_no").notEmpty().withMessage("Please enter contact no").isNumeric().withMessage('Please enter valid contact no').isLength({ min: 10, max: 10 }).withMessage('phone must be of 10 digit'),
-        check("pincode").notEmpty().withMessage("Please enter pincode").isNumeric().withMessage('Please enter valid pincode').isLength({ min: 6, max: 6 }).withMessage('pincode must be of six digit')
+
+        check("p_contact_no").notEmpty().withMessage("Please enter contact no").isNumeric().withMessage('Please enter valid contact no').isLength({ min: 10, max: 10 }).withMessage('contact no must be of ten digit'),
+
+        check("pincode").notEmpty().withMessage("Please enter pincode").isNumeric().withMessage('Please enter valid pincode').isLength({ min: 6, max: 6 }).withMessage('pincode must be of six digit'),
+
+        check("zone")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter zone"),
+
+        check("zone_area")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter zone area"),
+
+        check("aadhar_card_number")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter aadhar card number")
+          .matches(/^\d{12}$/)
+          .withMessage("Please enter a valid 12-digit aadhar card number"),
       ];
 
     case "editChannelLead":
@@ -1171,7 +1224,24 @@ const userValidationRules = (params) => {
         check("project_id").notEmpty().withMessage("Please choose project name"),
         check("email_id").notEmpty().withMessage("Please enter email_id").isEmail().withMessage('Please enter valid email'),
         // check("p_contact_no").notEmpty().withMessage("Please enter contact no").isNumeric().withMessage('Please enter valid contact no').isLength({ min: 10, max: 10 }).withMessage('phone must be of 10 digit'),
-        check("pincode").notEmpty().withMessage("Please enter pincode").isNumeric().withMessage('Please enter valid pincode').isLength({ min: 6, max: 6 }).withMessage('pincode must be of six digit')
+        check("pincode").notEmpty().withMessage("Please enter pincode").isNumeric().withMessage('Please enter valid pincode').isLength({ min: 6, max: 6 }).withMessage('pincode must be of six digit'),
+
+        check("zone")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter zone"),
+
+        check("zone_area")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter zone area"),
+
+        check("aadhar_card_number")
+          .optional()
+          .notEmpty()
+          .withMessage("Please enter aadhar card number")
+          .matches(/^\d{12}$/)
+          .withMessage("Please enter a valid 12-digit aadhar card number"),
       ];
 
     case "assetCostSheetUpdate":
