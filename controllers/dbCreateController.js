@@ -868,11 +868,14 @@ exports.downloadExcelData = async (req, res) => {
 exports.db_login = async (req, res) => {
     try {
         let { email, password, type, client_url } = req.body;
+        console.log(req.body.email,"1111111");
+        
         let userData = await Client.findOne({
             where: {
                 email: email,
             },
         });
+        console.log(userData,"111");
 
         if (!userData) {
             return res.status(400).json({ status: 400, message: "Email does not exist", data: null });

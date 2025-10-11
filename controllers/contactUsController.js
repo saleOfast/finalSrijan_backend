@@ -6,6 +6,61 @@ const sendEmail = require("../common/mailer");
 const { date } = require("joi");
 const path = require('path');
 const fs = require('fs');
+const { sendSMS } = require("../common/sms");
+
+// In-memory OTP store keyed by `${db_name}:${cpl_id}`
+// Value: { otp: string, expiresAt: number }
+const CP_VISIT_OTP_STORE = new Map();
+
+function generateSixDigitOTP() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// Generate and send OTP to CP mobile for stage change to VISIT
+exports.sendVisitOTP = async (req, res) => {
+    try {
+        const { db_name, cpl_id } = req.body;
+        if (!db_name) return responseError(req, res, "Client Database Name is Required");
+        if (!cpl_id) return responseError(req, res, "CPL ID is Required");
+
+        // Fetch lead to get contact number
+        const getLeadQuery = `
+            SELECT cpl_id, first_name, last_name, contact
+            FROM ${db_name}.db_channel_partner_leads
+            WHERE cpl_id = :cpl_id AND deletedAt IS NULL
+        `;
+
+        const [lead] = await db.sequelize.query(getLeadQuery, {
+            replacements: { cpl_id },
+            type: db.sequelize.QueryTypes.SELECT
+        });
+
+        if (!lead) return responseError(req, res, "No Lead Found with the Provided CPL ID");
+        if (!lead.contact) return responseError(req, res, "Lead does not have a valid contact number");
+
+        const otp = generateSixDigitOTP();
+        const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+        const key = makeOtpKey(db_name, cpl_id);
+        CP_VISIT_OTP_STORE.set(key, { otp, expiresAt });
+
+        const name = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Partner';
+        const message = `Dear ${name}, your verification OTP is ${otp}. It is valid for 10 minutes.`;
+        await sendSMS(lead.contact, message);
+
+        // Optional debug log for testing without SMS creds
+        console.log('[OTP DEBUG]', { db_name, cpl_id, otp });
+
+        return responseSuccess(req, res, "OTP sent successfully to the registered mobile number");
+    } catch (error) {
+        logErrorToFile(error);
+        console.error(error);
+        return responseError(req, res, "Failed to send OTP");
+    }
+}
+
+function makeOtpKey(dbName, cplId) {
+    return `${dbName}:${cplId}`;
+}
 
 exports.addChannelPartnerLead = async (req, res) => {
     try {
@@ -264,7 +319,7 @@ exports.getChannelPartnerLeads = async (req, res) => {
 
 exports.updateChannelPartnerLeads = async (req, res) => {
     try {
-        const { db_name, cpl_id, stage, follow_up_date, remarks, status, asssigned_to } = req.body;
+        const { db_name, cpl_id, stage, follow_up_date, remarks, status, asssigned_to, otp } = req.body;
         const now = new Date();
         const updatedAt = now.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -290,6 +345,33 @@ exports.updateChannelPartnerLeads = async (req, res) => {
         if (existingLead.length === 0) {
             return responseError(req, res, "No Lead Found with the Provided CPL ID");
         }
+        // Enforce OTP when changing stage to 'VISIT'
+        if (stage && String(stage).toUpperCase() === 'VISIT') {
+            // If role info is available, restrict to Admin/Manager (role_id 2 or 3). Otherwise, still enforce OTP.
+            const isAdminOrBST = req?.user?.role_id === 2 || req?.user?.role_id === 3 || typeof req?.user?.role_id === 'undefined';
+            if (!isAdminOrBST) {
+                return responseError(req, res, "Only Admin or BST can update stage to VISIT");
+            }
+
+            const key = makeOtpKey(db_name, cpl_id);
+            const record = CP_VISIT_OTP_STORE.get(key);
+            const nowMs = Date.now();
+            if (!otp) {
+                return responseError(req, res, "OTP is required to change stage to VISIT");
+            }
+            if (!record) {
+                return responseError(req, res, "No OTP found. Please generate OTP first");
+            }
+            if (record.expiresAt < nowMs) {
+                CP_VISIT_OTP_STORE.delete(key);
+                return responseError(req, res, "OTP expired. Please generate a new OTP");
+            }
+            if (String(record.otp) !== String(otp)) {
+                return responseError(req, res, "Invalid OTP");
+            }
+            // OTP verified; clear it so it can't be reused
+            CP_VISIT_OTP_STORE.delete(key);
+        }
 
         // Update the lead data in the db_channel_partner_leads table
         const updateLeadQuery = `
@@ -301,7 +383,14 @@ exports.updateChannelPartnerLeads = async (req, res) => {
         `;
 
         await db.sequelize.query(updateLeadQuery, {
-            replacements: { stage, updatedAt, cpl_id, follow_up_date, remarks, asssigned_to },
+            replacements: {
+                stage,
+                updatedAt,
+                cpl_id,
+                follow_up_date: (typeof follow_up_date !== 'undefined' ? follow_up_date : null),
+                remarks: (typeof remarks !== 'undefined' ? remarks : null),
+                asssigned_to: (typeof asssigned_to !== 'undefined' ? asssigned_to : null)
+            },
             type: db.sequelize.QueryTypes.UPDATE
         });
 

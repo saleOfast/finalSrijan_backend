@@ -15,6 +15,10 @@ router
     .delete(resolver, contactController.deleteChannelPartnerLead)
 
 router
+    .route("/sendVisitOTP")
+    .post(resolver, rolePermission, contactController.sendVisitOTP)
+
+router
     .route("/assignLeads")
     .post(resolver, rolePermission, contactController.assignLeads)
 
