@@ -926,14 +926,14 @@ exports.db_login = async (req, res) => {
             if (userData.isDB) {
                 // user is admin
                 if (type !== 'common') {
-                    let platformID = type == 'crm' ? 1 : type == 'dms' ? 2 : type == 'sales' ? 3 : 4
-                    let checkpermissionData = await userDb.platform.findOne({
-                        where: {
-                            is_active: true,
-                            platform_id: platformID
-                        },
-                    });
-                    if (!checkpermissionData) return res.status(400).json({ status: 401, message: "user not authorized" });
+                //     let platformID = type == 'crm' ? 1 : type == 'dms' ? 2 : type == 'sales' ? 3 : 4
+                //     let checkpermissionData = await userDb.platform.findOne({
+                //         where: {
+                //             is_active: true,
+                //             platform_id: platformID
+                //         },
+                //     });
+                //     if (!checkpermissionData) return res.status(400).json({ status: 401, message: "user not authorized" });
                 }
 
                 platformData = await userDb.platform.findAll({
@@ -946,15 +946,15 @@ exports.db_login = async (req, res) => {
 
                 // for other user 
                 if (type !== 'common') {
-                    let platformID = type == 'crm' ? 1 : type == 'dms' ? 2 : type == 'sales' ? 3 : 4
-                    checkpermissionData = await userDb.userPlatform.findOne({
-                        where: {
-                            platform_id: platformID,
-                            actions: true,
-                            user_id: userData.user_id,
-                        },
-                    });
-                    if (!checkpermissionData) return res.status(400).json({ status: 401, message: "user not authorized" });
+                    // let platformID = type == 'crm' ? 1 : type == 'dms' ? 2 : type == 'sales' ? 3 : 4
+                    // checkpermissionData = await userDb.userPlatform.findOne({
+                    //     where: {
+                    //         platform_id: platformID,
+                    //         actions: true,
+                    //         user_id: userData.user_id,
+                    //     },
+                    // });
+                    // if (!checkpermissionData) return res.status(400).json({ status: 401, message: "user not authorized" });
 
                 }
 

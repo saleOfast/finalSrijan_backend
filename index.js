@@ -84,6 +84,7 @@ const channelPartnerLeads = require("./routes/contactUsRoutes");
 
 const organisation = require("./routes/organisationRoutes");
 const emailTemplates = require("./routes/emailTemplateRoutes");
+const erpRoutes = require("./routes/erpRoutes");
 
 const path = require("path");
 
@@ -227,6 +228,7 @@ app.use("/api/v1/db/channelPartnerLeads", channelPartnerLeads);
 app.use("/api/v1/db/organisation", organisation);
 
 app.use("/api/v1/db/emailTemplates", emailTemplates);
+app.use("/api/v1/erp", erpRoutes);
 
 
 app.listen(PORT, '0.0.0.0', () => {

@@ -260,6 +260,11 @@
 			type: DataTypes.STRING,
 			allowNull: true,
 		},
+
+		LOI_Number: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
 	},
 	{ paranoid: true, timestamps: true },   
 	);
