@@ -75,7 +75,11 @@
 
 
 module.exports = {
+<<<<<<< HEAD
     HOST: "127.0.0.1",
+=======
+    HOST: "localhost",
+>>>>>>> fe0f0f5 (db.config)
     PORT: "3306",
     USER: "root",
     PASSWORD: "Admin@0676",
@@ -93,4 +97,8 @@ module.exports = {
         acquire: 30000,
         idle: 10000
     }
+<<<<<<< HEAD
 };
+=======
+};
+>>>>>>> fe0f0f5 (db.config)
