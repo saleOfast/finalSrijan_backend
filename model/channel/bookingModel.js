@@ -69,7 +69,7 @@ module.exports = (sequelize, DataTypes) => {
 
             lead_id: {
                 type: DataTypes.INTEGER,
-                allowNull: true,
+                allowNull: false,  // ✅ MANDATORY: Lead is required for all bookings
                 references: {
                     model: 'db_leads', 
                     key: 'lead_id', 

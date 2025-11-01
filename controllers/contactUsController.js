@@ -64,7 +64,7 @@ function makeOtpKey(dbName, cplId) {
 
 exports.addChannelPartnerLead = async (req, res) => {
     try {
-        const { db_name, first_name, last_name, contact, email } = req.body;
+        const { db_name, first_name, last_name, contact, email, state, city } = req.body;
         if (!db_name) return responseError(req, res, "Client Not Found");
 
         const stage = 'OPEN';
@@ -133,9 +133,9 @@ exports.addChannelPartnerLead = async (req, res) => {
         // Insert the new lead into the db_channel_partner_leads table
         const [newLead] = await db.sequelize.query(`
             INSERT INTO ${db_name}.db_channel_partner_leads 
-            (first_name, last_name, contact, email, query, stage, status, createdAt, updatedAt)
-            VALUES (:first_name, :last_name, :contact, :email, :query, :stage, :status, :createdAt, :updatedAt)`, {
-            replacements: { first_name, last_name, contact, email, query: null, stage, status, createdAt, updatedAt },
+            (first_name, last_name, contact, email, state, city, query, stage, status, createdAt, updatedAt)
+            VALUES (:first_name, :last_name, :contact, :email, :state, :city, :query, :stage, :status, :createdAt, :updatedAt)`, {
+            replacements: { first_name, last_name, contact, email, state: state || null, city: city || null, query: null, stage, status, createdAt, updatedAt },
             type: db.sequelize.QueryTypes.INSERT
         });
 

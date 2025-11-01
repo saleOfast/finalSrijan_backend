@@ -2602,7 +2602,7 @@ exports.registrationTokenVerification = async (req, res) => {
 
 exports.cpCompleteRegistration = async (req, res) => {
     try {
-        const { token, name, mobile, user_l_name, gst, organisation, address, city_id, state_id } = req.body;
+        const { token, name, mobile, user_l_name, gst, organisation, address, city_id, state_id, city, state } = req.body;
         const decoded = await promisify(jwt.verify)(token, process.env.CLIENT_SECRET);
         const currentTime = Math.floor(Date.now() / 1000); // Current time in seconds
         if (decoded && decoded.exp < currentTime)
@@ -2678,8 +2678,11 @@ exports.cpCompleteRegistration = async (req, res) => {
         updateData.organisation = organisation;
         updateData.address = address;
         updateData.country_id = 101;
-        updateData.city_id = city_id;
-        updateData.state_id = state_id;
+        // Prefer names if provided, otherwise fall back to IDs (legacy)
+        if (state) updateData.state = state;
+        if (city) updateData.city = city;
+        if (!state && state_id) updateData.state_id = state_id;
+        if (!city && city_id) updateData.city_id = city_id;
 
         let userProfile = await ud.usersProfiles.findOne({
             where: {

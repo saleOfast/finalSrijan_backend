@@ -170,7 +170,42 @@ exports.webhookUpsertLead = async (req, res) => {
   }
 };
 
-// Upsert a booking from ERP webhook
+/**
+ * Upsert a booking from ERP webhook
+ * 
+ * ⚠️ CRITICAL: Lead is MANDATORY - booking will be rejected without lead
+ * 
+ * MANDATORY fields (will reject if not provided):
+ * ● ERP Lead ID (erp_lead_id) - REQUIRED: Automatically links booking to existing lead by erp_lead_id
+ *   OR
+ * ● Lead ID (lead_id) - REQUIRED: Direct link to lead (alternative to erp_lead_id)
+ * 
+ * Required booking fields from client payload:
+ * ● ERP Booking ID (erp_booking_id, booking_id, bookingId) - ERP team's booking ID
+ * ● Booking Name (booking_name, bookingName)
+ * ● Email (email, email_id)
+ * ● Contact No. (contact_no, contactNo)
+ * ● Project (project, project_name, projectName)
+ * ● CP Name (CP_Name, cp_name, cpName)
+ * ● Location (location, Location)
+ * ● Pincode (pincode, pinCode)
+ * ● Created At (created_at, createdAt, created_on)
+ * ● Received Date (received_date, recieved_date)
+ * ● Flat No. (flat_number, flatNumber, flat_no)
+ * ● Buyer ID (buyer_id, buyerId)
+ * ● Visit Done Date (visit_done_date, visitDoneDate)
+ * ● Visit Done Time (visit_done_time, visitDoneTime)
+ * ● Visit Remarks (visit_remarks, visitRemarks)
+ * ● Created By (created_by, createdBy)
+ * ● Received Time (received_time, recieved_time)
+ * ● Block No. (block_number, blockNumber, block_no)
+ * ● Booking Status (status, booking_status)
+ * 
+ * Auto-linking features:
+ * ● If erp_lead_id provided: automatically finds lead and sets lead_id
+ * ● If project_name/project provided: automatically finds project and sets project_id
+ * ● If lead not found: booking will be REJECTED with error message
+ */
 exports.webhookUpsertBooking = async (req, res) => {
   const t = await req.config.sequelize.transaction();
   const requestId = `BOOKING_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -189,15 +224,52 @@ exports.webhookUpsertBooking = async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-    // Require at least a unique external id or lead linkage
-    if (!payload.sales_booking_id && !payload.lead_id) {
-      console.log(`[${requestId}] ERP Booking Webhook - Validation Failed: Missing sales_booking_id or lead_id`);
-      return responseError(req, res, "sales_booking_id or lead_id is required");
+    // Comprehensive validation for all required booking fields
+    const requiredBookingFields = [
+      'erp_booking_id', 'booking_name', 'email', 'contact_no', 'project', 
+      'CP_Name', 'location', 'pincode', 'created_at', 'received_date', 
+      'flat_number', 'buyer_id', 'visit_done_date', 'visit_done_time', 
+      'visit_remarks', 'created_by', 'received_time', 'block_number', 'status'
+    ];
+    
+    const missingBookingFields = [];
+    const bookingFieldMappings = {
+      'erp_booking_id': ['erp_booking_id', 'bookingId'],
+      'booking_name': ['booking_name', 'bookingName'],
+      'email': ['email', 'email_id'],
+      'contact_no': ['contact_no', 'contactNo'],
+      'project': ['project', 'project_name', 'projectName'],
+      'CP_Name': ['CP_Name', 'cp_name', 'cpName'],
+      'location': ['location', 'Location'],
+      'pincode': ['pincode', 'pinCode'],
+      'created_at': ['created_at', 'createdAt', 'created_on'],
+      'received_date': ['received_date', 'recieved_date'],
+      'flat_number': ['flat_number', 'flatNumber', 'flat_no'],
+      'buyer_id': ['buyer_id', 'buyerId'],
+      'visit_done_date': ['visit_done_date', 'visitDoneDate'],
+      'visit_done_time': ['visit_done_time', 'visitDoneTime'],
+      'visit_remarks': ['visit_remarks', 'visitRemarks'],
+      'created_by': ['created_by', 'createdBy'],
+      'received_time': ['received_time', 'recieved_time'],
+      'block_number': ['block_number', 'blockNumber', 'block_no'],
+      'status': ['status', 'booking_status']
+    };
+
+    // Check for missing required fields
+    for (const field of requiredBookingFields) {
+      const possibleKeys = bookingFieldMappings[field];
+      const hasField = possibleKeys.some(key => payload[key] !== undefined && payload[key] !== null && payload[key] !== '');
+      if (!hasField) {
+        missingBookingFields.push(field);
+      }
     }
 
     const bookingBody = {
-      booking_name: payload.booking_name || null,
-      email: payload.email || null,
+      // Required fields mapping
+      erp_booking_id: payload.erp_booking_id || payload.bookingId || null,
+
+      booking_name: payload.booking_name || payload.bookingName || null,
+      email: payload.email || payload.email_id || null,
       Location: payload.Location || payload.location || null,
       pincode: payload.pincode || null,
       contact_no: payload.contact_no || null,
@@ -217,6 +289,37 @@ exports.webhookUpsertBooking = async (req, res) => {
       block_number: payload.block_number || null,
       buyer_id: payload.buyer_id || null,
     };
+
+    // AUTO-LINK: If erp_lead_id is provided in payload, find and link to existing lead
+    if (payload.erp_lead_id && !bookingBody.lead_id) {
+      console.log(`[${requestId}] ERP Booking Webhook - Attempting to find lead by erp_lead_id: ${payload.erp_lead_id}`);
+      const existingLead = await req.config.leads.findOne({ 
+        where: { erp_lead_id: payload.erp_lead_id }, 
+        transaction: t 
+      });
+      if (existingLead) {
+        bookingBody.lead_id = existingLead.lead_id;
+        console.log(`[${requestId}] ERP Booking Webhook - Found and linked lead: lead_id=${existingLead.lead_id}`);
+      } else {
+        console.log(`[${requestId}] ERP Booking Webhook - No lead found for erp_lead_id: ${payload.erp_lead_id}`);
+      }
+    }
+
+    // AUTO-LINK: If project_name is provided in payload, find and link to existing project
+    if ((payload.project_name || payload.project || payload.projectName) && !bookingBody.project_id) {
+      const projectName = payload.project_name || payload.project || payload.projectName;
+      console.log(`[${requestId}] ERP Booking Webhook - Attempting to find project by name: ${projectName}`);
+      const existingProject = await req.config.channelProject.findOne({ 
+        where: { project: projectName }, 
+        transaction: t 
+      });
+      if (existingProject) {
+        bookingBody.project_id = existingProject.project_id;
+        console.log(`[${requestId}] ERP Booking Webhook - Found and linked project: project_id=${existingProject.project_id}`);
+      } else {
+        console.log(`[${requestId}] ERP Booking Webhook - No project found for name: ${projectName}`);
+      }
+    }
 
     // Validate FK: lead_id and project_id
     console.log(`[${requestId}] ERP Booking Webhook - Validating Foreign Keys:`, {
@@ -238,6 +341,13 @@ exports.webhookUpsertBooking = async (req, res) => {
     if (bookingBody.project_id && !projectValid) bookingBody.project_id = null;
 
     console.log(`[${requestId}] ERP Booking Webhook - FK Validation Results:`, fkValidationResults);
+
+    // ❌ MANDATORY: Lead is REQUIRED for booking creation
+    if (!bookingBody.lead_id) {
+      console.log(`[${requestId}] ERP Booking Webhook - Validation Failed: Lead is required`);
+      console.log(`[${requestId}] ERP Booking Webhook - Provided: erp_lead_id='${payload.erp_lead_id}', lead_id='${payload.lead_id}'`);
+      return responseError(req, res, "Lead is required. Please provide 'erp_lead_id' or 'lead_id' in the payload.");
+    }
 
     // Upsert by sales_booking_id if present, else create new
     let booking;
@@ -289,7 +399,7 @@ exports.webhookUpdateBookingStatus = async (req, res) => {
   
   try {
     const payload = req.body || {};
-    const { sales_booking_id, booking_id, status } = payload;
+    const { sales_booking_id, erp_booking_id, status } = payload;
     
     // Log incoming request
     console.log(`[${requestId}] ERP Booking Status Webhook - Incoming Request:`, {
@@ -303,7 +413,7 @@ exports.webhookUpdateBookingStatus = async (req, res) => {
     });
 
     // Require at least one identifier and status
-    if (!sales_booking_id && !booking_id) {
+    if (!sales_booking_id && !erp_booking_id) {
       console.log(`[${requestId}] ERP Booking Status Webhook - Validation Failed: Missing sales_booking_id or booking_id`);
       return responseError(req, res, "sales_booking_id or booking_id is required");
     }
@@ -322,7 +432,7 @@ exports.webhookUpdateBookingStatus = async (req, res) => {
     // Find booking by sales_booking_id or booking_id
     const whereClause = sales_booking_id 
       ? { sales_booking_id } 
-      : { booking_id };
+      : { erp_booking_id };
 
     console.log(`[${requestId}] ERP Booking Status Webhook - Searching for booking:`, whereClause);
 
@@ -338,7 +448,7 @@ exports.webhookUpdateBookingStatus = async (req, res) => {
     }
 
     console.log(`[${requestId}] ERP Booking Status Webhook - Booking Found:`, { 
-      booking_id: booking.booking_id, 
+      erp_booking_id: booking.erp_booking_id, 
       sales_booking_id: booking.sales_booking_id,
       current_status: booking.status,
       new_status: status
@@ -351,7 +461,7 @@ exports.webhookUpdateBookingStatus = async (req, res) => {
     console.log(`[${requestId}] ERP Booking Status Webhook - Transaction Committed`);
 
     console.log(`[${requestId}] ERP Booking Status Webhook - Success Response:`, { 
-      booking_id: booking.booking_id, 
+      erp_booking_id: booking.erp_booking_id, 
       sales_booking_id: booking.sales_booking_id,
       old_status: booking._previousDataValues?.status,
       new_status: status
