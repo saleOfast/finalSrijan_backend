@@ -120,6 +120,23 @@ module.exports = (sequelize, DataTypes) => {
                 type: DataTypes.STRING,
                 allowNull: true,
             },
+
+            // Additional required fields for ERP integration
+            CP_Name: {
+                type: DataTypes.STRING,
+                allowNull: true,
+            },
+
+            created_by: {
+                type: DataTypes.STRING,
+                allowNull: true,
+   
+            },
+
+            created_at: {
+                type: DataTypes.DATE,
+                allowNull: true,
+            },
         },
         { paranoid: true, timestamps: true },
     );

@@ -265,6 +265,38 @@
 			type: DataTypes.STRING,
 			allowNull: true,
 		},
+
+		// Additional required fields for ERP integration
+		CP_Name: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
+
+		created_by: {
+			type: DataTypes.STRING,
+			allowNull: true,
+
+			},
+
+		budget_range: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
+
+		size: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
+
+		type_of_bhk: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
+
+		lead_valid_upto: {
+			type: DataTypes.DATE,
+			allowNull: true,
+		},
 	},
 	{ paranoid: true, timestamps: true },   
 	);
