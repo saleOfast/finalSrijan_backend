@@ -62,10 +62,142 @@ function makeOtpKey(dbName, cplId) {
     return `${dbName}:${cplId}`;
 }
 
+/**
+ * Assigns CP Lead to BST based on state and city matching
+ * Uses round-robin logic if multiple BSTs match
+ * @param {string} db_name - Database name
+ * @param {number} cpl_id - CP Lead ID
+ * @param {string} state - Lead state
+ * @param {string} city - Lead city
+ */
+async function assignCPLeadToBST(db_name, cpl_id, state, city) {
+    try {
+        // If state or city is not provided, skip assignment
+        if (!state || !city) {
+            console.log(`Skipping BST assignment for lead ${cpl_id}: state or city not provided`);
+            return;
+        }
+
+        // Find BST users (role_id = 2) matching both state AND city
+        const bstUsersQuery = `
+            SELECT user_id, user, email, state, city, user_status, createdAt
+            FROM ${db_name}.db_users
+            WHERE role_id = 2 
+            AND user_status = true 
+            AND deletedAt IS NULL
+            AND state = :state 
+            AND city = :city
+            ORDER BY createdAt ASC
+        `;
+
+        let bstUsers = await db.sequelize.query(bstUsersQuery, {
+            replacements: { state, city },
+            type: db.sequelize.QueryTypes.SELECT
+        });
+
+        // If no BST matches both state and city, fallback to state-only matching
+        let matchedBy = 'state and city';
+        if (bstUsers.length === 0) {
+            console.log(`No BST users found for state: ${state} and city: ${city}. Trying state-only match...`);
+            
+            // Fallback: Match by state only
+            const bstUsersStateQuery = `
+                SELECT user_id, user, email, state, city, user_status, createdAt
+                FROM ${db_name}.db_users
+                WHERE role_id = 2 
+                AND user_status = true 
+                AND deletedAt IS NULL
+                AND state = :state
+                ORDER BY createdAt ASC
+            `;
+
+            const bstUsersStateOnly = await db.sequelize.query(bstUsersStateQuery, {
+                replacements: { state },
+                type: db.sequelize.QueryTypes.SELECT
+            });
+
+            if (bstUsersStateOnly.length === 0) {
+                console.log(`No BST users found for state: ${state}. Lead ${cpl_id} will remain unassigned.`);
+                return;
+            }
+
+            // Use state-only matched BSTs
+            bstUsers = bstUsersStateOnly;
+            matchedBy = 'state only';
+            console.log(`Found ${bstUsers.length} BST user(s) matching state: ${state} (fallback)`);
+        }
+
+        // If only one BST matches, assign directly
+        if (bstUsers.length === 1) {
+            const bstUserId = bstUsers[0].user_id;
+            await db.sequelize.query(`
+                UPDATE ${db_name}.db_channel_partner_leads 
+                SET asssigned_to = :bst_user_id, updatedAt = NOW()
+                WHERE cpl_id = :cpl_id
+            `, {
+                replacements: { bst_user_id: bstUserId, cpl_id },
+                type: db.sequelize.QueryTypes.UPDATE
+            });
+            console.log(`Assigned CP Lead ${cpl_id} to BST ${bstUserId} (matched by ${matchedBy})`);
+            return;
+        }
+
+        // Multiple BSTs found - use round-robin logic
+        // Count leads assigned to each BST
+        const bstWithLeadCounts = await Promise.all(bstUsers.map(async (bst) => {
+            const leadCountQuery = `
+                SELECT COUNT(*) as lead_count
+                FROM ${db_name}.db_channel_partner_leads
+                WHERE asssigned_to = :user_id AND deletedAt IS NULL
+            `;
+            const result = await db.sequelize.query(leadCountQuery, {
+                replacements: { user_id: bst.user_id },
+                type: db.sequelize.QueryTypes.SELECT
+            });
+            const leadCount = result && result[0] ? parseInt(result[0].lead_count) || 0 : 0;
+            return {
+                ...bst,
+                leadCount
+            };
+        }));
+
+        // Sort by lead count (ascending), then by createdAt (ascending) for tie-breaking
+        bstWithLeadCounts.sort((a, b) => {
+            if (a.leadCount === b.leadCount) {
+                return new Date(a.createdAt) - new Date(b.createdAt);
+            }
+            return a.leadCount - b.leadCount;
+        });
+
+        // Assign to BST with least leads
+        const selectedBST = bstWithLeadCounts[0];
+        await db.sequelize.query(`
+            UPDATE ${db_name}.db_channel_partner_leads 
+            SET asssigned_to = :bst_user_id, updatedAt = NOW()
+            WHERE cpl_id = :cpl_id
+        `, {
+            replacements: { bst_user_id: selectedBST.user_id, cpl_id },
+            type: db.sequelize.QueryTypes.UPDATE
+        });
+        console.log(`Assigned CP Lead ${cpl_id} to BST ${selectedBST.user_id} (round-robin from ${bstUsers.length} BSTs, matched by ${matchedBy})`);
+    } catch (error) {
+        console.error('Error assigning CP Lead to BST:', error);
+        // Don't throw error - assignment failure shouldn't break lead creation
+    }
+}
+
 exports.addChannelPartnerLead = async (req, res) => {
     try {
         const { db_name, first_name, last_name, contact, email, state, city } = req.body;
         if (!db_name) return responseError(req, res, "Client Not Found");
+
+        // Validate mandatory fields: state and city
+        if (!state || state.trim() === '') {
+            return responseError(req, res, "State is required");
+        }
+        if (!city || city.trim() === '') {
+            return responseError(req, res, "City is required");
+        }
 
         const stage = 'OPEN';
         const status = true;
@@ -158,6 +290,9 @@ exports.addChannelPartnerLead = async (req, res) => {
             type: db.sequelize.QueryTypes.INSERT
         });
 
+        // Automatically assign BST based on state and city (both are mandatory)
+        await assignCPLeadToBST(db_name, newLead, state.trim(), city.trim());
+
         return responseSuccess(req, res, "You Have Registered Successfully");
 
     } catch (error) {
@@ -196,38 +331,45 @@ exports.getChannelPartnerLeads = async (req, res) => {
             statusFilter = ` AND leads.stage = :status_id `;
         }
 
-        // Handle role_id == 3 logic
+        // Handle role_id == 3 logic (Director/Supervisor)
         if (req.user.role_id == 3) {
-            // Get all users reporting to the current user
-            const getReportingManagers = `
-            SELECT users.user_id, users.user
-            FROM ${db_name}.db_users AS users
-            WHERE users.report_to = :user_id
-          `;
+            // Use recursive query to get all users under the Director (including BST users)
+            const getUserHierarchyQuery = `
+                WITH RECURSIVE user_hierarchy AS (
+                    SELECT user_id, report_to, user
+                    FROM ${db_name}.db_users
+                    WHERE user_id = :user_id
+                    UNION
+                    SELECT u.user_id, u.report_to, u.user
+                    FROM ${db_name}.db_users u
+                    INNER JOIN user_hierarchy uh ON u.report_to = uh.user_id
+                )
+                SELECT user_id, user FROM user_hierarchy;
+            `;
 
-            const reportingManagers = await db.sequelize.query(getReportingManagers, {
+            const allUsersUnderDirector = await db.sequelize.query(getUserHierarchyQuery, {
                 replacements: { user_id: req.user.user_id },
                 type: db.sequelize.QueryTypes.SELECT
             });
 
-            const reportingManagerIds = reportingManagers.map(user => user.user_id);
-            reportingManagerIds.push(req.user.user_id);
+            const userIds = allUsersUnderDirector.map(user => user.user_id);
 
-            const getReportingUsersQuery = `
-              SELECT users.user_id, users.user
-              FROM ${db_name}.db_users AS users
-              WHERE users.report_to IN (:user_ids)
-            `;
+            // If no users found in hierarchy, fallback to showing all BST users
+            if (userIds.length === 0 || userIds.length === 1) {
+                // Fallback: Get all BST users (role_id = 2) if no hierarchy exists
+                const getAllBSTUsersQuery = `
+                    SELECT user_id, user
+                    FROM ${db_name}.db_users
+                    WHERE role_id = 2 AND user_status = true AND deletedAt IS NULL
+                `;
+                const bstUsers = await db.sequelize.query(getAllBSTUsersQuery, {
+                    type: db.sequelize.QueryTypes.SELECT
+                });
+                userIds.length = 0; // Clear array
+                userIds.push(...bstUsers.map(user => user.user_id));
+            }
 
-            const reportingUsers = await db.sequelize.query(getReportingUsersQuery, {
-                replacements: { user_ids: reportingManagerIds },
-                type: db.sequelize.QueryTypes.SELECT
-            });
-
-            // Extract user_ids from reporting users
-            const reportingUserIds = reportingUsers.map(user => user.user_id);
-            reportingUserIds.push(req.user.user_id); // Include current user's user_id
-            // Fetch leads for both the current user and the users that report to them
+            // Fetch leads assigned to all users under Director (or all BST users if no hierarchy)
             const getLeadsQuery = `
                 SELECT leads.*, users.user_id, users.user, users.user_status
                 FROM ${db_name}.db_channel_partner_leads as leads
@@ -238,7 +380,7 @@ exports.getChannelPartnerLeads = async (req, res) => {
             `;
 
             leads = await db.sequelize.query(getLeadsQuery, {
-                replacements: { user_ids: reportingUserIds, f_date, t_date, status_id },
+                replacements: { user_ids: userIds, f_date, t_date, status_id },
                 type: db.sequelize.QueryTypes.SELECT
             });
         }

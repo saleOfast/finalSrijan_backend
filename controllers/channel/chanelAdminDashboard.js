@@ -8,7 +8,8 @@ exports.getDashboardData = async (req, res) => {
         const startDate = req.query.startDate;
         let endDate = req.query.endDate
         let leads;
-        let visits;
+        let visitsGenerated;
+        let visitsCompleted;
         let booking;
         let topFiveLeads;
         let topFiveBooking;
@@ -52,7 +53,28 @@ exports.getDashboardData = async (req, res) => {
             },
         })
 
-        visits = await req.config.leadVisit.count({
+        // Count all visits generated (regardless of status)
+        visitsGenerated = await req.config.leadVisit.count({
+            where: {
+                createdAt: {
+                    [Op.between]: [startDate, endDate],
+                },
+            },
+            include: [
+                {
+                    model: req.config.leads,
+                    as: 'leadData',
+                    where: {
+                        ...whereLeadClause
+                    },
+                    attributes: ["lead_id"],
+                    required: true,
+                },
+            ],
+        })
+
+        // Count visits completed
+        visitsCompleted = await req.config.leadVisit.count({
             where: {
                 createdAt: {
                     [Op.between]: [startDate, endDate],
@@ -214,7 +236,8 @@ exports.getDashboardData = async (req, res) => {
 
         let dashboard = {
             leads,
-            visits,
+            visitsGenerated,
+            visitsCompleted,
             booking,
             averageHours,
             topFiveLeads,
@@ -283,7 +306,7 @@ const rangewise = (type, startDate, endDate, req) => {
         case "monthly":
 
             return `SELECT
-            CONCAT('week ', WEEK(date, 1) - WEEK(DATE_SUB(date, INTERVAL DAYOFMONTH(date) - 1 DAY), 1) + 1, 'th week') AS 'date',
+            CONCAT('week ', WEEK(MIN(date), 1) - WEEK(DATE_SUB(MIN(date), INTERVAL DAYOFMONTH(MIN(date)) - 1 DAY), 1) + 1, 'th week') AS 'date',
             COUNT(leadId) AS 'lead',
             COUNT(bookingId) AS 'booking'
         FROM (
@@ -317,7 +340,7 @@ const rangewise = (type, startDate, endDate, req) => {
         // changed this
         case "yearly":
             return `SELECT
-            CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+            CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
             COUNT(leadId) AS 'lead',
             COUNT(bookingId) AS 'booking'
             FROM (
@@ -350,7 +373,7 @@ const rangewise = (type, startDate, endDate, req) => {
         default:
 
             return `SELECT
-        CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+        CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
         COUNT(leadId) AS 'lead',
         COUNT(bookingId) AS 'booking'
         FROM (
@@ -462,7 +485,7 @@ const rangewiseBookingvsBrokerage = (type, startDate, endDate, req) => {
 
         case "yearly":
             return `SELECT
-            CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+            CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
             COUNT(brokerageId) AS 'brokerage',
             COUNT(bookingId) AS 'booking'
             FROM (
@@ -494,7 +517,7 @@ const rangewiseBookingvsBrokerage = (type, startDate, endDate, req) => {
 
         default:
             return `SELECT
-            CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+            CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
             COUNT(brokerageId) AS 'brokerage',
             COUNT(bookingId) AS 'booking'
             FROM (
@@ -625,12 +648,12 @@ const rangewiseEnrolVsAccept = (type, startDate, endDate, req) => {
         // this changed too
         case "yearly":
             return `SELECT
-            CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+            CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
             SUM(enrolled) AS enrolled,
             SUM(approved) AS approved
         FROM (
             SELECT
-                DATE(userApproved.createdAt) AS date,
+                MIN(DATE(userApproved.createdAt)) AS date,
                 0 AS enrolled,
                 COUNT(DISTINCT userApproved.user_id) AS approved
             FROM
@@ -646,7 +669,7 @@ const rangewiseEnrolVsAccept = (type, startDate, endDate, req) => {
             UNION ALL
             
             SELECT
-                DATE(userEnrol.createdAt) AS date,
+                MIN(DATE(userEnrol.createdAt)) AS date,
                 COUNT(DISTINCT userEnrol.user_id) AS enrolled,
                 0 AS approved
             FROM
@@ -668,12 +691,12 @@ const rangewiseEnrolVsAccept = (type, startDate, endDate, req) => {
         default:
 
             return `SELECT
-        CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+        CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
         SUM(enrolled) AS enrolled,
         SUM(approved) AS approved
     FROM (
         SELECT
-            DATE(userApproved.createdAt) AS date,
+            MIN(DATE(userApproved.createdAt)) AS date,
             0 AS enrolled,
             COUNT(DISTINCT userApproved.user_id) AS approved
         FROM
@@ -689,7 +712,7 @@ const rangewiseEnrolVsAccept = (type, startDate, endDate, req) => {
         UNION ALL
         
         SELECT
-            DATE(userEnrol.createdAt) AS date,
+            MIN(DATE(userEnrol.createdAt)) AS date,
             COUNT(DISTINCT userEnrol.user_id) AS enrolled,
             0 AS approved
         FROM
@@ -801,12 +824,12 @@ const rangewiseRequestedVsComplete = (type, startDate, endDate, req) => {
 
         case "yearly":
             return `SELECT
-            CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+            CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
             SUM(Requested) AS Requested,
             SUM(Completed) AS Completed
         FROM (
             SELECT
-                DATE(v1.createdAt) AS date,
+                MIN(DATE(v1.createdAt)) AS date,
                 COUNT(DISTINCT CASE WHEN v1.status = 'Requested' THEN v1.visit_id END) AS Requested,
                 0 AS Completed
             FROM
@@ -820,7 +843,7 @@ const rangewiseRequestedVsComplete = (type, startDate, endDate, req) => {
             UNION ALL
         
             SELECT
-                DATE(v2.createdAt) AS date,
+                MIN(DATE(v2.createdAt)) AS date,
                 0 AS Requested,
                 COUNT(DISTINCT CASE WHEN v2.status = 'Completed' THEN v2.visit_id END) AS Completed
             FROM
@@ -842,12 +865,12 @@ const rangewiseRequestedVsComplete = (type, startDate, endDate, req) => {
         default:
 
             return `SELECT
-        CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+        CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
         SUM(Requested) AS Requested,
         SUM(Completed) AS Completed
     FROM (
         SELECT
-            DATE(v1.createdAt) AS date,
+            MIN(DATE(v1.createdAt)) AS date,
             COUNT(DISTINCT CASE WHEN v1.status = 'Requested' THEN v1.visit_id END) AS Requested,
             0 AS Completed
         FROM
@@ -861,7 +884,7 @@ const rangewiseRequestedVsComplete = (type, startDate, endDate, req) => {
         UNION ALL
     
         SELECT
-            DATE(v2.createdAt) AS date,
+            MIN(DATE(v2.createdAt)) AS date,
             0 AS Requested,
             COUNT(DISTINCT CASE WHEN v2.status = 'Completed' THEN v2.visit_id END) AS Completed
         FROM
@@ -964,7 +987,7 @@ const rangewiseVisitVsBooking = (type, startDate, endDate, req) => {
 
         case "yearly":
             return `SELECT
-            CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+            CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
             COUNT(visitID) AS 'visit',
             COUNT(bookingId) AS 'booking'
         FROM (
@@ -997,7 +1020,7 @@ const rangewiseVisitVsBooking = (type, startDate, endDate, req) => {
         default:
 
             return `SELECT
-        CONCAT(YEAR(date), '-', LEFT(MONTHNAME(date), 3)) AS 'date',
+        CONCAT(YEAR(MIN(date)), '-', LEFT(MONTHNAME(MIN(date)), 3)) AS 'date',
         COUNT(visitID) AS 'visit',
         COUNT(bookingId) AS 'booking'
     FROM (

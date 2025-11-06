@@ -159,10 +159,18 @@ exports.createUser = async (req, res) => {
     try {
         let { email, role_id, isCRM, isDMS, isSALES, isCHANNEL, isMEDIA, cpt_id } = req.body;
 
-        if (cpt_id) {
-            let cptExists = req.config.channelPartnerType.findOne({ where: { cpt_id: cpt_id } })
-            if (!cptExists) {
-                delete req.body.cpt_id
+        // Validate channel partner type id against current tenant DB
+        if (cpt_id !== undefined && cpt_id !== null) {
+            const parsedCptId = Number(cpt_id);
+            if (Number.isNaN(parsedCptId)) {
+                req.body.cpt_id = null;
+            } else {
+                const cptExists = await req.config.channelPartnerType.findOne({ where: { cpt_id: parsedCptId } });
+                if (!cptExists) {
+                    req.body.cpt_id = null; // avoid FK violation; FK is ON DELETE SET NULL
+                } else {
+                    req.body.cpt_id = parsedCptId;
+                }
             }
         }
 

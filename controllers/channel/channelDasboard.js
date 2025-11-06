@@ -8,7 +8,8 @@ exports.getDashboardData = async (req, res) => {
         const startDate = req.query.startDate;
         let endDate = req.query.endDate
         let leads;
-        let visits;
+        let visitsGenerated;
+        let visitsCompleted;
         let booking;
         let topFiveLeads;
         let topFiveBooking;
@@ -51,7 +52,28 @@ exports.getDashboardData = async (req, res) => {
             },
         })
 
-        visits = await req.config.leadVisit.count({
+        // Count all visits generated (regardless of status)
+        visitsGenerated = await req.config.leadVisit.count({
+            where: {
+                createdAt: {
+                    [Op.between]: [startDate, endDate],
+                },
+            },
+            include: [
+                {
+                    model: req.config.leads,
+                    as: 'leadData',
+                    where: {
+                        ...whereLeadClause
+                    },
+                    attributes: ["lead_id"],
+                    required: true,
+                },
+            ],
+        })
+
+        // Count visits completed
+        visitsCompleted = await req.config.leadVisit.count({
             where: {
                 createdAt: {
                     [Op.between]: [startDate, endDate],
@@ -212,7 +234,8 @@ exports.getDashboardData = async (req, res) => {
         // })
         let dashboard = {
             leads,
-            visits,
+            visitsGenerated,
+            visitsCompleted,
             booking,
             averageHours,
             topFiveLeads,
