@@ -996,25 +996,38 @@ exports.getUsersByRoleID = async (req, res) => {
             // };
         }
 
-        if (req.user.role_id == 2 || req.user.role_id == 3) {
+        // BST users: Only see CP users assigned to them (report_to = BST user_id)
+        if (req.user.role_id == 2) {
             whereClause.report_to = req.user.user_id
         }
 
+        // Director: See only CP users that report to BST users assigned to this Director
         if (req.query.role_id == 1 && req.user.role_id == 3) {
-            const bstUser = await req.config.users.findAll({
-                where: { report_to: req.user.user_id, role_id: 2 },
+            // Find all BST users that report to this Director
+            const bstUsers = await req.config.users.findAll({
+                where: { 
+                    report_to: req.user.user_id, 
+                    role_id: 2,
+                    user_status: true,
+                    deletedAt: null
+                },
                 attributes: ['user_id']
             });
 
-            const bstUserIds = bstUser.map(user => user.user_id);
+            const bstUserIds = bstUsers.map(user => user.user_id);
 
             if (bstUserIds.length > 0) {
+                // Show CP users that report to BST users under Director
                 whereClause.report_to = {
                     [Op.in]: bstUserIds
                 };
             } else {
-                whereClause.report_to = [];
+                // If no BST users under Director, show empty list
+                whereClause.user_id = -1; // Impossible condition - returns empty list
             }
+        } else if (req.user.role_id == 3) {
+            // For Directors viewing other roles, filter by direct reports
+            whereClause.report_to = req.user.user_id;
         }
 
         let userData = await req.config.users.findAll({
@@ -1028,9 +1041,9 @@ exports.getUsersByRoleID = async (req, res) => {
                 //     WHEN "onboarding_date" IS NOT NULL THEN "onboarding_date"
                 //     ELSE "createdAt"
                 // END`), 'sortingDate'],
-                [req.config.sequelize.fn('COUNT', req.config.sequelize.fn('DISTINCT', req.config.sequelize.col('db_leads.lead_id'))), 'lead_count'],
-                [req.config.sequelize.fn('COUNT', req.config.sequelize.fn('DISTINCT', req.config.sequelize.col('db_leads->visitList.visit_id'))), 'visit_count'],
-                [req.config.sequelize.fn('COUNT', req.config.sequelize.fn('DISTINCT', req.config.sequelize.col('db_leads->BookingLeadList.booking_id'))), 'booking_count'],
+                [req.config.sequelize.literal(`(SELECT COUNT(DISTINCT l.lead_id) FROM db_leads l WHERE l.assigned_lead = db_user.user_id AND l.deletedAt IS NULL)`), 'lead_count'],
+                [req.config.sequelize.literal(`(SELECT COUNT(DISTINCT lv.visit_id) FROM db_lead_visits lv INNER JOIN db_leads l ON lv.lead_id = l.lead_id WHERE l.assigned_lead = db_user.user_id AND lv.deletedAt IS NULL AND l.deletedAt IS NULL)`), 'visit_count'],
+                [req.config.sequelize.literal(`(SELECT COUNT(DISTINCT lb.booking_id) FROM db_lead_bookings lb INNER JOIN db_leads l ON lb.lead_id = l.lead_id WHERE l.assigned_lead = db_user.user_id AND lb.deletedAt IS NULL AND l.deletedAt IS NULL)`), 'booking_count'],
             ],
             include: [
                 {
@@ -1091,28 +1104,8 @@ exports.getUsersByRoleID = async (req, res) => {
                     as: 'reportToUser',
                     attributes: ['user_id', 'user']
                 },
-                {
-                    model: req.config.leads,
-                    attributes: ['lead_id', 'lead_name'],
-
-                    include: [
-                        {
-                            model: req.config.leadVisit,
-                            as: 'visitList',
-                            attributes: ["visit_id",],
-
-                        },
-                        {
-                            model: req.config.leadBooking,
-                            as: 'BookingLeadList',
-                            attributes: ["booking_id",],
-
-                        },
-                    ],
-                    group: ['leadAssignedBy.lead_id'],
-                },
             ],
-            group: ['user_id'],
+            // No GROUP BY needed since counts are calculated via subqueries in attributes
             order: [[req.config.sequelize.literal('"sortingDate"'), 'DESC']],
         });
 
@@ -1313,9 +1306,8 @@ exports.getAllUsers = async (req, res) => {
                 };
             }
 
-            // if not login in by admin the all user list will be shown that report to current user
-            console.log('req.user.isDB', req.user.isDB, req.user.role_id)
-            if (!req.user.isDB && req.user.role_id !== 3) {
+            // BST users: Only see users assigned to them (report_to = BST user_id)
+            if (!req.user.isDB && req.user.role_id == 2) {
                 whereCaluse = {
                     doc_verification: 2,
                     isDB: false,
@@ -1324,6 +1316,42 @@ exports.getAllUsers = async (req, res) => {
                         { report_to: req.user.user_id },
                     ],
                 };
+            }
+            
+            // Director: See only CP users that report to BST users assigned to this Director
+            if (!req.user.isDB && req.user.role_id == 3) {
+                // Get all BST users reporting to Director
+                const bstUsers = await req.config.users.findAll({
+                    where: { 
+                        report_to: req.user.user_id, 
+                        role_id: 2,
+                        user_status: true,
+                        deletedAt: null
+                    },
+                    attributes: ['user_id']
+                });
+
+                const bstUserIds = bstUsers.map(user => user.user_id);
+
+                if (bstUserIds.length > 0) {
+                    // Show CP users (role_id = 1) that report to BST users under Director
+                    whereCaluse = {
+                        ...whereCaluse,
+                        role_id: 1, // Only CP users
+                        doc_verification: 2, // Only approved CPs
+                        report_to: {
+                            [Op.in]: bstUserIds
+                        }
+                    };
+                } else {
+                    // If no BST under Director, show empty list
+                    whereCaluse = {
+                        ...whereCaluse,
+                        role_id: 1,
+                        doc_verification: 2,
+                        user_id: -1 // Impossible condition - returns empty list
+                    };
+                }
             }
 
             userData = await req.config.users.findAll({
