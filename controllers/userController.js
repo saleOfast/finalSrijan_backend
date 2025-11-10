@@ -15,6 +15,7 @@ const { promisify } = require("util");
 const { middle } = require("../connectionResolver/middleConnection");
 const { first_small } = require("../connectionResolver/firstConnection_small");
 const { admin } = require("./dbCreateController");
+const { log } = require("console");
 require("dotenv").config();
 
 
@@ -2360,6 +2361,7 @@ exports.forgotpassword = async (req, res) => {
         await user.save();
 
         const resetLink = `${adminofDb.client_url}/ChangePassword?tkn=u$34${passwordResetToken}`;
+        console.log('resetLink', resetLink)
 
         const htmlTemplate = await db.emailTemplates.findOne({ where: { template_id: 6 } }) // Password Reset Template
         const template = htmlTemplate.template
