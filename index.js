@@ -75,6 +75,7 @@ const visitRoutes = require("./routes/channel/visitRoutes");
 const bookingRoutes = require("./routes/channel/bookingRoutes");
 const brokerageRoutes = require("./routes/channel/brokerageRoutes");
 const channemDashboardRoutes = require("./routes/channel/channemDashboardRoutes");
+const channelReportRoutes = require("./routes/channel/channelReportRoutes");
 const salesForceRoutes = require("./routes/channel/salesForceRoutes");
 const settingsRoutes = require("./routes/generalSettingsRoutes");
 
@@ -218,6 +219,7 @@ app.use("/api/v1/db/channel/visit", visitRoutes);
 app.use("/api/v1/db/channel/booking", bookingRoutes);
 app.use("/api/v1/db/channel/brokerage", brokerageRoutes);
 app.use("/api/v1/db/channel/dashboard", channemDashboardRoutes);
+app.use("/api/v1/db/channel/report", channelReportRoutes);
 app.use("/api/v1/db/channel/salesforce", salesForceRoutes);
 app.use("/api/v1/db/settings", settingsRoutes);
 

@@ -464,6 +464,42 @@ exports.createUser = async (req, res) => {
                     subject: "NK Realtors",
                     message: htmlContent,
                 };
+
+                // Update CP lead stage to "LINK SENT" when registration link is sent
+                try {
+                    // Find CP lead by email or contact
+                    const cpLead = await req.config.channelPartnerLeads.findOne({
+                        where: {
+                            [Op.or]: [
+                                { email: email },
+                                { contact: req.body.contact_number || req.body.contact }
+                            ]
+                        }
+                    });
+
+                    if (cpLead) {
+                        // Update stage to "LINK SENT"
+                        await cpLead.update({ stage: 'LINK SENT' });
+                        
+                        // Also insert a new entry into db_channel_partner_lead_details
+                        const now = new Date();
+                        const updatedAt = now.toISOString().slice(0, 19).replace('T', ' ');
+                        await req.config.channelPartnerLeadsDetails.create({
+                            cpl_id: cpLead.cpl_id,
+                            stage: 'LINK SENT',
+                            follow_up_date: null,
+                            remarks: 'Registration link sent to CP',
+                            status: true,
+                            createdAt: updatedAt,
+                            updatedAt: updatedAt
+                        }).catch(err => {
+                            console.error('Error creating CP lead details:', err);
+                        });
+                    }
+                } catch (leadUpdateError) {
+                    // Don't fail the request if lead update fails
+                    console.error('Error updating CP lead stage:', leadUpdateError);
+                }
             }
             else {
                 const resetToken = crypto.randomBytes(32).toString("hex");
@@ -1701,10 +1737,18 @@ exports.updateUser = async (req, res) => {
             if (dbUserData.doc_verification == 2) { // Accept case
                 if (userData.doc_verification !== dbUserData.doc_verification) {
                     message = await handleAcceptProcess(req, userData, dbUserData);
+                    // Check if BST tried to approve CP request (error message returned)
+                    if (message && message.includes("BST cannot approve")) {
+                        return res.status(403).json({ status: 403, message: message });
+                    }
                 }
             } else if (dbUserData.doc_verification == 3) { // Reject case
                 if (userData.doc_verification != dbUserData.doc_verification) {
                     message = await handleRejectProcess(req, userData, dbUserData);
+                    // Check if BST tried to reject CP request (error message returned)
+                    if (message && message.includes("BST cannot reject")) {
+                        return res.status(403).json({ status: 403, message: message });
+                    }
                 }
             }
 
@@ -1818,6 +1862,13 @@ const handleAcceptProcess = async (req, userData, dbUserData) => {
         }
     }
     else if (req.user.role_id == 2) { // BST role
+        // BST should NOT be able to approve CP requests after form submission
+        // Only Supervisor (role_id = 3) and Admin (isDB = true) can approve CP requests
+        if (userData.role_id == 1 && (userData.doc_verification == 1 || dbUserData.doc_verification == 2)) {
+            // CP has submitted form (doc_verification = 1) or is being approved, BST cannot approve
+            return "BST cannot approve CP requests. Only Supervisor and Admin can approve after CP submits form.";
+        }
+        // For non-CP users or CPs that haven't submitted form, allow BST approval
         delete dbUserData.doc_verification
         dbUserData.bst_response = dbUserData.bst_approval = true;
         if (!userData.director_approval) {
@@ -1871,6 +1922,13 @@ const handleRejectProcess = async (req, userData, dbUserData) => {
         }
     }
     else if (req.user.role_id == 2) { // BST role
+        // BST should NOT be able to reject CP requests after form submission
+        // Only Supervisor (role_id = 3) and Admin (isDB = true) can reject CP requests
+        if (userData.role_id == 1 && (userData.doc_verification == 1 || dbUserData.doc_verification == 3)) {
+            // CP has submitted form (doc_verification = 1) or is being rejected, BST cannot reject
+            return "BST cannot reject CP requests. Only Supervisor and Admin can reject after CP submits form.";
+        }
+        // For non-CP users or CPs that haven't submitted form, allow BST rejection
         delete dbUserData.doc_verification
         dbUserData.bst_response = dbUserData.bst_approval = true;
         dbUserData.bst_approval = false;
@@ -2744,26 +2802,84 @@ exports.cpCompleteRegistration = async (req, res) => {
         // First profile save then save user
         await user.save();
 
-        // userData = await ud.users.findOne({
-        //   attributes: [
-        //     "user_id",
-        //     "user",
-        //     "contact_number",
-        //     "db_name",
-        //     "user_code",
-        //     "role_id",
-        //     "doc_verification",
-        //     "reject_reason",
-        //   ],
-        //   where: {
-        //     user_id: decoded.id,
-        //   },
-        //   include: [
-        //     {
-        //       model: ud.usersProfiles,
-        //     },
-        //   ],
-        // });
+        // Send notification to Supervisor when CP submits onboarding form
+        try {
+            // Find all Supervisor users (role_id = 3) to notify them
+            const supervisorUsers = await ud.users.findAll({
+                where: {
+                    role_id: 3, // Supervisor/Director role
+                    user_status: true,
+                    deletedAt: null
+                },
+                attributes: ['user_id', 'user', 'email', 'user_l_name']
+            });
+
+            if (supervisorUsers && supervisorUsers.length > 0) {
+                // Get company name
+                let company_name = 'NK Realtors';
+                const company = await ud.organisationInfo.findOne({
+                    attributes: ['company_name']
+                });
+                if (company) {
+                    company_name = company.company_name || 'NK Realtors';
+                }
+
+                // Get email template (use template_id 9 for CP lead notification, or create a new one)
+                let emailTemplate;
+                try {
+                    emailTemplate = await ud.emailTemplates.findOne({ where: { template_id: 9 } }); // New CP Lead Template
+                } catch (err) {
+                    console.log('Email template not found, using default');
+                }
+
+                // Prepare email content
+                const cpName = `${name} ${user_l_name || ''}`.trim();
+                const cpEmail = user.email || '';
+                const cpContact = mobile || '';
+
+                let htmlContent = '';
+                if (emailTemplate && emailTemplate.template) {
+                    htmlContent = emailTemplate.template
+                        .replace(/{{UsersName}}/g, cpName)
+                        .replace(/{{Name}}/g, cpName)
+                        .replace(/{{BDName}}/g, cpName)
+                        .replace(/{{PhoneNo}}/g, cpContact)
+                        .replace(/{{EmailID}}/g, cpEmail)
+                        .replace(/{{CompanyName}}/g, company_name);
+                } else {
+                    // Default email content if template not found
+                    htmlContent = `
+                        <p>Dear Supervisor,</p>
+                        <p>A Channel Partner has submitted their onboarding form and is waiting for your approval.</p>
+                        <p><strong>Channel Partner Details:</strong></p>
+                        <ul>
+                            <li>Name: ${cpName}</li>
+                            <li>Email: ${cpEmail}</li>
+                            <li>Contact: ${cpContact}</li>
+                        </ul>
+                        <p>Please review and approve the Channel Partner's request.</p>
+                        <p>Best regards,<br>${company_name}</p>
+                    `;
+                }
+
+                // Send email to each Supervisor
+                for (const supervisor of supervisorUsers) {
+                    if (supervisor.email) {
+                        const emailOptions = {
+                            email: supervisor.email,
+                            subject: `Channel Partner Onboarding Request - ${cpName}`,
+                            message: htmlContent,
+                        };
+                        await sendEmail(emailOptions).catch(err => {
+                            console.error(`Failed to send email to supervisor ${supervisor.email}:`, err);
+                        });
+                    }
+                }
+            }
+        } catch (notificationError) {
+            // Don't fail the request if notification fails
+            console.error('Error sending notification to Supervisor:', notificationError);
+        }
 
         await ud.sequelize.close();
         return res.status(200).json({
@@ -2858,10 +2974,22 @@ exports.getPendingVerificationUser = async (req, res) => {
                 ],
             });
         } else {
-            if (!req.user.isDB && req.user.role_id != 3) {
-                whereClause.report_to = req.user.user_id
-            }
-            if (!req.user.isDB && req.user.role_id == 3) {
+            // For CP (role_id = 1) with doc_verification = 1 (submitted form), only Supervisor and Admin can see them
+            // BST (role_id = 2) should NOT see CP pending verifications after form submission
+            if (req.user.isDB) {
+                // Admin can see ALL CP pending verifications (no restrictions)
+                // No need to modify whereClause - Admin sees everything
+            } else if (req.user.role_id == 2) {
+                // BST should NOT see CP pending verifications after form submission (doc_verification = 1)
+                // Only show CPs with doc_verification = 0 (link sent but not submitted) or doc_verification = 3 (rejected)
+                // Exclude doc_verification = 1 (submitted form, pending Supervisor/Admin approval)
+                whereClause.doc_verification = {
+                    [Op.in]: [0, 3] // Only show link sent or rejected, not submitted
+                };
+                whereClause.report_to = req.user.user_id;
+            } else if (req.user.role_id == 3) {
+                // Supervisor can see ALL CP pending verifications (including doc_verification = 1)
+                // Find all BSTs that report to this Supervisor
                 const bstUser = await req.config.users.findAll({
                     where: { report_to: req.user.user_id, role_id: 2 },
                     attributes: ['user_id']
@@ -2869,15 +2997,33 @@ exports.getPendingVerificationUser = async (req, res) => {
 
                 const bstUserIds = bstUser.map(user => user.user_id);
 
+                // Build report_to condition for Supervisor
                 if (bstUserIds.length > 0) {
+                    // Show CPs that report to BSTs under this Supervisor, OR CPs that report directly to Supervisor, OR CPs with no report_to
+                    // Combine all user IDs (BSTs + Supervisor)
+                    const allUserIds = [...bstUserIds, req.user.user_id];
                     whereClause.report_to = {
-                        [Op.in]: bstUserIds
+                        [Op.or]: [
+                            { [Op.in]: allUserIds },
+                            { [Op.is]: null }
+                        ]
                     };
                 } else {
-                    whereClause.report_to = [];
+                    // Show CPs that report to Supervisor or have no report_to
+                    whereClause.report_to = {
+                        [Op.or]: [
+                            req.user.user_id,
+                            { [Op.is]: null }
+                        ]
+                    };
                 }
+                // Supervisor can see all doc_verification statuses (0, 1, 3) - no change to doc_verification filter
+            } else {
+                // For other roles, use existing logic
+                whereClause.report_to = req.user.user_id;
             }
-            usersData = await req.config.users.findAll({
+        }
+        usersData = await req.config.users.findAll({
                 where: whereClause,
                 attributes: {
                     exclude: [
@@ -2945,7 +3091,6 @@ exports.getPendingVerificationUser = async (req, res) => {
                 ],
                 order: [["user_id", "DESC"]],
             });
-        }
         return responseSuccess(req, res, "User list fetch successfully.", usersData);
 
     } catch (error) {
