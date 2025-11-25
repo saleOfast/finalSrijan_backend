@@ -177,7 +177,7 @@ exports.getMenusByPlatform = async (req, res) => {
         }
 
         // Get all menus for the platform, ordered by hierarchy
-        const menus = await req.config.db_menu.findAll({
+        const menus = await req.config.menus.findAll({
             where: {
                 menu_type: platform_type,
                 is_active: true
@@ -231,7 +231,7 @@ exports.getRolePermissions = async (req, res) => {
         // Get platform type from role's platform or default to CHANNEL
         let platformType = 'CHANNEL'; // default
         if (role.platform_id) {
-            const platform = await req.config.db_platform.findOne({
+            const platform = await req.config.platform.findOne({
                 where: { platform_id: role.platform_id },
                 attributes: ['platform_type']
             });
@@ -241,7 +241,7 @@ exports.getRolePermissions = async (req, res) => {
         }
 
         // Get all menus for the platform
-        const menus = await req.config.db_menu.findAll({
+        const menus = await req.config.menus.findAll({
             where: {
                 menu_type: platformType,
                 is_active: true
@@ -463,9 +463,9 @@ async function ensureParentMenuAccess(roleId, menuIds, req) {
     
     for (let menuId of menuIds) {
         // Get parent menu chain
-        let currentMenu = await req.config.db_menu.findByPk(menuId);
+        let currentMenu = await req.config.menus.findByPk(menuId);
         while (currentMenu && currentMenu.parent_id > 0) {
-            const parentMenu = await req.config.db_menu.findByPk(currentMenu.parent_id);
+            const parentMenu = await req.config.menus.findByPk(currentMenu.parent_id);
             if (parentMenu && !menuIds.includes(parentMenu.menu_id)) {
                 parentMenus.add(parentMenu.menu_id);
                 currentMenu = parentMenu;

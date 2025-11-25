@@ -490,7 +490,11 @@ exports.updateChannelPartnerLeads = async (req, res) => {
         // Enforce OTP when changing stage to 'VISIT'
         if (stage && String(stage).toUpperCase() === 'VISIT') {
             // If role info is available, restrict to Admin/Manager (role_id 2 or 3). Otherwise, still enforce OTP.
-            const isAdminOrBST = req?.user?.role_id === 2 || req?.user?.role_id === 3 || typeof req?.user?.role_id === 'undefined';
+            const isAdminOrBST =
+                req?.user?.isDB === true ||
+                req?.user?.role_id === 2 ||
+                req?.user?.role_id === 3 ||
+                typeof req?.user?.role_id === 'undefined';
             if (!isAdminOrBST) {
                 return responseError(req, res, "Only Admin or BST can update stage to VISIT");
             }

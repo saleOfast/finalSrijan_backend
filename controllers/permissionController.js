@@ -147,8 +147,9 @@ exports.getDynamicDashboardNav = async (req, res) => {
         }
 
         AllData = dashboardNav; // storing all the cats data
+        // Dynamically find root menus (parent_id = 0) for the platform instead of hardcoding menu IDs
         var parent_data = dashboardNav.filter((obj, j) => {
-            return obj.parent_id == 0 && (obj.menu_id == 172 || obj.menu_id == 338);
+            return obj.parent_id == 0;
         });
 
         var newArr = []; // storing tree data
@@ -237,8 +238,9 @@ exports.getDynamicDashboardAdminNav = async (req, res) => {
         }
 
         AllData = dashboardNav; // storing all the cats data
+        // Dynamically find root menus (parent_id = 0) for the platform instead of hardcoding menu IDs
         var parent_data = dashboardNav.filter((obj, j) => {
-            return obj.parent_id == 0 && (obj.menu_id == 173 || obj.menu_id == 338);
+            return obj.parent_id == 0;
         });
 
         var newArr = []; // storing tree data
