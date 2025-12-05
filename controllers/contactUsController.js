@@ -63,68 +63,72 @@ function makeOtpKey(dbName, cplId) {
 }
 
 /**
- * Assigns CP Lead to BST based on state and city matching
+ * Assigns CP Lead to BST based on state_id and city_id matching (ID-based)
  * Uses round-robin logic if multiple BSTs match
  * @param {string} db_name - Database name
  * @param {number} cpl_id - CP Lead ID
- * @param {string} state - Lead state
- * @param {string} city - Lead city
+ * @param {number} state_id - Lead state ID
+ * @param {number} city_id - Lead city ID
  */
-async function assignCPLeadToBST(db_name, cpl_id, state, city) {
+async function assignCPLeadToBST(db_name, cpl_id, state_id, city_id) {
     try {
-        // If state or city is not provided, skip assignment
-        if (!state || !city) {
-            console.log(`Skipping BST assignment for lead ${cpl_id}: state or city not provided`);
+        // If state_id is not provided, skip assignment
+        if (!state_id) {
+            console.log(`Skipping BST assignment for lead ${cpl_id}: state_id not provided`);
             return;
         }
 
-        // Find BST users (role_id = 2) matching both state AND city
-        const bstUsersQuery = `
-            SELECT user_id, user, email, state, city, user_status, createdAt
-            FROM ${db_name}.db_users
-            WHERE role_id = 2 
-            AND user_status = true 
-            AND deletedAt IS NULL
-            AND state = :state 
-            AND city = :city
-            ORDER BY createdAt ASC
-        `;
+        // Find BST users (role_id = 2) matching both state_id AND city_id
+        let bstUsers = [];
+        let matchedBy = 'state_id and city_id';
 
-        let bstUsers = await db.sequelize.query(bstUsersQuery, {
-            replacements: { state, city },
-            type: db.sequelize.QueryTypes.SELECT
-        });
-
-        // If no BST matches both state and city, fallback to state-only matching
-        let matchedBy = 'state and city';
-        if (bstUsers.length === 0) {
-            console.log(`No BST users found for state: ${state} and city: ${city}. Trying state-only match...`);
-            
-            // Fallback: Match by state only
-            const bstUsersStateQuery = `
-                SELECT user_id, user, email, state, city, user_status, createdAt
+        if (city_id) {
+            const bstUsersQuery = `
+                SELECT user_id, user, email, state_id, city_id, user_status, createdAt
                 FROM ${db_name}.db_users
                 WHERE role_id = 2 
                 AND user_status = true 
                 AND deletedAt IS NULL
-                AND state = :state
+                AND state_id = :state_id 
+                AND city_id = :city_id
+                ORDER BY createdAt ASC
+            `;
+
+            bstUsers = await db.sequelize.query(bstUsersQuery, {
+                replacements: { state_id, city_id },
+                type: db.sequelize.QueryTypes.SELECT
+            });
+        }
+
+        // If no BST matches both state_id and city_id, fallback to state_id-only matching
+        if (bstUsers.length === 0) {
+            console.log(`No BST users found for state_id: ${state_id} and city_id: ${city_id}. Trying state_id-only match...`);
+            
+            // Fallback: Match by state_id only
+            const bstUsersStateQuery = `
+                SELECT user_id, user, email, state_id, city_id, user_status, createdAt
+                FROM ${db_name}.db_users
+                WHERE role_id = 2 
+                AND user_status = true 
+                AND deletedAt IS NULL
+                AND state_id = :state_id
                 ORDER BY createdAt ASC
             `;
 
             const bstUsersStateOnly = await db.sequelize.query(bstUsersStateQuery, {
-                replacements: { state },
+                replacements: { state_id },
                 type: db.sequelize.QueryTypes.SELECT
             });
 
             if (bstUsersStateOnly.length === 0) {
-                console.log(`No BST users found for state: ${state}. Lead ${cpl_id} will remain unassigned.`);
+                console.log(`No BST users found for state_id: ${state_id}. Lead ${cpl_id} will remain unassigned.`);
                 return;
             }
 
-            // Use state-only matched BSTs
+            // Use state_id-only matched BSTs
             bstUsers = bstUsersStateOnly;
-            matchedBy = 'state only';
-            console.log(`Found ${bstUsers.length} BST user(s) matching state: ${state} (fallback)`);
+            matchedBy = 'state_id only';
+            console.log(`Found ${bstUsers.length} BST user(s) matching state_id: ${state_id} (fallback)`);
         }
 
         // If only one BST matches, assign directly
@@ -188,16 +192,84 @@ async function assignCPLeadToBST(db_name, cpl_id, state, city) {
 
 exports.addChannelPartnerLead = async (req, res) => {
     try {
-        const { db_name, first_name, last_name, contact, email, state, city } = req.body;
+        const { db_name, first_name, last_name, contact, email, state, city, state_id, city_id } = req.body;
         if (!db_name) return responseError(req, res, "Client Not Found");
 
-        // Validate mandatory fields: state and city
-        if (!state || state.trim() === '') {
-            return responseError(req, res, "State is required");
+        // Frontend now sends state_id and city_id, so prioritize those
+        let finalStateId = state_id ? parseInt(state_id) : null;
+        let finalCityId = city_id ? parseInt(city_id) : null;
+        let finalStateName = null;
+        let finalCityName = null;
+
+        // Validate state_id: Frontend should send state_id, but support legacy state name for backward compatibility
+        if (finalStateId && !isNaN(finalStateId)) {
+            // Fetch state name from database using state_id
+            const [stateRecord] = await db.sequelize.query(`
+                SELECT state_id, state_name FROM ${db_name}.db_states 
+                WHERE state_id = :state_id LIMIT 1`, {
+                replacements: { state_id: finalStateId },
+                type: db.sequelize.QueryTypes.SELECT
+            });
+
+            if (!stateRecord) {
+                return responseError(req, res, `State with state_id ${finalStateId} not found in database`);
+            }
+            finalStateName = stateRecord.state_name;
+        } else if (state) {
+            // Backward compatibility: If state_id not provided but state name is, try to convert (for legacy support)
+            const stateName = state.trim();
+            const [stateRecordLegacy] = await db.sequelize.query(`
+                SELECT state_id, state_name FROM ${db_name}.db_states 
+                WHERE state_name = :state_name LIMIT 1`, {
+                replacements: { state_name: stateName },
+                type: db.sequelize.QueryTypes.SELECT
+            });
+
+            if (stateRecordLegacy) {
+                finalStateId = stateRecordLegacy.state_id;
+                finalStateName = stateRecordLegacy.state_name;
+            } else {
+                return responseError(req, res, `State "${stateName}" not found in database. Please provide state_id instead.`);
+            }
+        } else {
+            return responseError(req, res, "state_id is required");
         }
-        if (!city || city.trim() === '') {
-            return responseError(req, res, "City is required");
+
+        // Handle city_id: Frontend should send city_id, but support legacy city name for backward compatibility
+        if (finalCityId && !isNaN(finalCityId)) {
+            // Fetch city name from database using city_id
+            const [cityRecord] = await db.sequelize.query(`
+                SELECT city_id, city_name FROM ${db_name}.db_cities 
+                WHERE city_id = :city_id AND state_id = :state_id LIMIT 1`, {
+                replacements: { city_id: finalCityId, state_id: finalStateId },
+                type: db.sequelize.QueryTypes.SELECT
+            });
+
+            if (cityRecord) {
+                finalCityName = cityRecord.city_name;
+            } else {
+                console.log(`City with city_id ${finalCityId} not found in database for state_id ${finalStateId}, proceeding without city`);
+                // Continue without city - will fallback to state_id-only matching
+                finalCityId = null;
+            }
+        } else if (city && finalStateId) {
+            // Backward compatibility: If city_id not provided but city name is, try to convert (for legacy support)
+            const cityName = city.trim();
+            const [cityRecordLegacy] = await db.sequelize.query(`
+                SELECT city_id, city_name FROM ${db_name}.db_cities 
+                WHERE city_name = :city_name AND state_id = :state_id LIMIT 1`, {
+                replacements: { city_name: cityName, state_id: finalStateId },
+                type: db.sequelize.QueryTypes.SELECT
+            });
+
+            if (cityRecordLegacy) {
+                finalCityId = cityRecordLegacy.city_id;
+                finalCityName = cityRecordLegacy.city_name;
+            } else {
+                console.log(`City "${cityName}" not found in database for state_id ${finalStateId}, proceeding without city_id`);
+            }
         }
+        // Note: city_id is optional, so we don't return an error if it's not provided
 
         const stage = 'OPEN';
         const status = true;
@@ -262,12 +334,24 @@ exports.addChannelPartnerLead = async (req, res) => {
         };
         await sendEmail(emailOptions);
 
-        // Insert the new lead into the db_channel_partner_leads table
+        // Insert the new lead into the db_channel_partner_leads table with state_id and city_id only
         const [newLead] = await db.sequelize.query(`
             INSERT INTO ${db_name}.db_channel_partner_leads 
-            (first_name, last_name, contact, email, state, city, query, stage, status, createdAt, updatedAt)
-            VALUES (:first_name, :last_name, :contact, :email, :state, :city, :query, :stage, :status, :createdAt, :updatedAt)`, {
-            replacements: { first_name, last_name, contact, email, state: state || null, city: city || null, query: null, stage, status, createdAt, updatedAt },
+            (first_name, last_name, contact, email, state_id, city_id, query, stage, status, createdAt, updatedAt)
+            VALUES (:first_name, :last_name, :contact, :email, :state_id, :city_id, :query, :stage, :status, :createdAt, :updatedAt)`, {
+            replacements: { 
+                first_name, 
+                last_name, 
+                contact, 
+                email, 
+                state_id: finalStateId,
+                city_id: finalCityId,
+                query: null, 
+                stage, 
+                status, 
+                createdAt, 
+                updatedAt 
+            },
             type: db.sequelize.QueryTypes.INSERT
         });
 
@@ -290,8 +374,8 @@ exports.addChannelPartnerLead = async (req, res) => {
             type: db.sequelize.QueryTypes.INSERT
         });
 
-        // Automatically assign BST based on state and city (both are mandatory)
-        await assignCPLeadToBST(db_name, newLead, state.trim(), city.trim());
+        // Automatically assign BST based on state_id and city_id (ID-based round-robin assignment)
+        await assignCPLeadToBST(db_name, newLead, finalStateId, finalCityId);
 
         return responseSuccess(req, res, "You Have Registered Successfully");
 

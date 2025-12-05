@@ -1,37 +1,125 @@
-// Twilio-based SMS utility
+// Vox-CPaaS SMS utility
 // Usage: sendSMS(mobile, message)
+// The message should contain the OTP, which will be extracted and used in the template
 
-let twilioClient = null;
-function getTwilioClient() {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  if (!sid || !token) return null;
-  if (!twilioClient) {
-    // Lazy import to avoid dependency errors if not installed yet
-    // eslint-disable-next-line global-require
-    const twilio = require('twilio');
-    twilioClient = twilio(sid, token);
+const axios = require('axios');
+
+/**
+ * Format phone number to include country code if not present
+ * @param {string|number} mobile - Phone number
+ * @returns {string} Formatted phone number with +91 prefix
+ */
+function formatPhoneNumber(mobile) {
+  let phone = String(mobile).trim();
+  // Remove any spaces or dashes
+  phone = phone.replace(/[\s-]/g, '');
+  
+  // If already starts with +91, return as is
+  if (phone.startsWith('+91')) {
+    return phone;
   }
-  return twilioClient;
+  
+  // If starts with 91 (without +), add +
+  if (phone.startsWith('91') && phone.length > 10) {
+    return `+${phone}`;
+  }
+  
+  // If starts with 0, remove it and add +91
+  if (phone.startsWith('0')) {
+    phone = phone.substring(1);
+  }
+  
+  // Add +91 prefix
+  return `+91${phone}`;
+}
+
+/**
+ * Extract OTP from message
+ * Looks for patterns like "OTP is 123456" or "your OTP is 123456"
+ * @param {string} message - Message containing OTP
+ * @returns {string|null} Extracted OTP or null if not found
+ */
+function extractOTP(message) {
+  // Try to find OTP pattern: "OTP is 123456" or similar
+  const otpPatterns = [
+    /OTP is (\d{4,8})/i,
+    /your OTP is (\d{4,8})/i,
+    /verification OTP is (\d{4,8})/i,
+    /code is (\d{4,8})/i,
+    /(\d{4,8}) is your OTP/i,
+  ];
+  
+  for (const pattern of otpPatterns) {
+    const match = message.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  
+  // If no pattern found, try to find any 4-8 digit number
+  const digitMatch = message.match(/\b(\d{4,8})\b/);
+  if (digitMatch && digitMatch[1]) {
+    return digitMatch[1];
+  }
+  
+  return null;
 }
 
 async function sendSMS(mobile, message) {
   try {
-    const client = getTwilioClient();
-    const from = process.env.TWILIO_FROM_NUMBER; // e.g., '+12025550123'
-    if (client && from) {
-      const resp = await client.messages.create({
-        from,
-        to: String(mobile).startsWith('+') ? String(mobile) : `+${String(mobile)}`,
-        body: message,
-      });
-      return { sid: resp.sid };
+    const projectId = process.env.VOX_PROJECT_ID;
+    const authToken = process.env.VOX_AUTH_TOKEN;
+    const from = process.env.VOX_FROM || 'SRIJNR';
+    const templateId = process.env.VOX_TEMPLATE_ID || '1107169322469473268';
+    const templateBody = process.env.VOX_TEMPLATE_BODY || 
+      'Use One-Time Password {#var#} to submit your enquiry in Srijan Realty. Do not share the OTP with anyone. -Srijan Realty Pvt. Ltd.';
+    
+    // Check if credentials are configured
+    if (!projectId || !authToken) {
+      console.log(`[SMS MOCK] To: ${mobile} | Message: ${message}`);
+      return { mocked: true, provider: 'mock', mobile, message };
     }
-    // No provider configured: mock-send
-    console.log(`[SMS MOCK] To: ${mobile} | Message: ${message}`);
-    return { mocked: true, provider: 'mock', mobile, message };
+    
+    // Format phone number
+    const formattedPhone = formatPhoneNumber(mobile);
+    
+    // Extract OTP from message
+    const otp = extractOTP(message);
+    
+    if (!otp) {
+      console.warn('[SMS WARNING] Could not extract OTP from message. Using full message as body.');
+      // If OTP extraction fails, use the original message (fallback)
+      // But the API expects template format, so we'll still try with template
+    }
+    
+    // Replace {#var#} with OTP in template body
+    const body = otp ? templateBody.replace(/{#var#}/g, otp) : message;
+    
+    // Prepare request data
+    const params = new URLSearchParams();
+    params.append('projectid', projectId);
+    params.append('authtoken', authToken);
+    params.append('from', from);
+    params.append('to', formattedPhone);
+    params.append('template_id', templateId);
+    params.append('body', body);
+    
+    // Send SMS via vox-cpaas.in API
+    const response = await axios.post('https://api.vox-cpaas.in/sendsms', params, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+    
+    console.log(`[SMS SUCCESS] To: ${formattedPhone} | OTP: ${otp || 'N/A'}`);
+    return { 
+      success: true, 
+      provider: 'vox-cpaas', 
+      mobile: formattedPhone,
+      response: response.data 
+    };
   } catch (err) {
-    console.error('SMS send failed:', err);
+    console.error('SMS send failed:', err.response?.data || err.message);
     throw err;
   }
 }

@@ -32,9 +32,27 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: true,
             },
 
+            state_id: {
+                type: DataTypes.INTEGER,
+                allowNull: true,
+                references: {
+                    model: 'db_states',
+                    key: 'state_id',
+                }
+            },
+
             city: {
                 type: DataTypes.STRING,
                 allowNull: true,
+            },
+
+            city_id: {
+                type: DataTypes.INTEGER,
+                allowNull: true,
+                references: {
+                    model: 'db_cities',
+                    key: 'city_id',
+                }
             },
 
             query: {

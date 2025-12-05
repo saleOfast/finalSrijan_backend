@@ -2705,6 +2705,17 @@ exports.cpCompleteRegistration = async (req, res) => {
             return res
                 .status(400)
                 .json({ status: 400, message: "Token has expired" });
+
+        const hasState = (state && String(state).trim().length > 0) || state_id;
+        const hasCity = (city && String(city).trim().length > 0) || city_id;
+
+        if (!hasState) {
+            return res.status(400).json({ status: 400, message: "State is mandatory for Channel Partner registration" });
+        }
+
+        if (!hasCity) {
+            return res.status(400).json({ status: 400, message: "City is mandatory for Channel Partner registration" });
+        }
         //
         // console.log('decoded.db_name',decoded.db_name);
         let ud = await first_small(decoded.db_name, req, res);
@@ -2774,11 +2785,9 @@ exports.cpCompleteRegistration = async (req, res) => {
         updateData.organisation = organisation;
         updateData.address = address;
         updateData.country_id = 101;
-        // Prefer names if provided, otherwise fall back to IDs (legacy)
-        if (state) updateData.state = state;
-        if (city) updateData.city = city;
-        if (!state && state_id) updateData.state_id = state_id;
-        if (!city && city_id) updateData.city_id = city_id;
+        // Note: state and city fields removed from model - use state_id and city_id instead
+        if (state_id) updateData.state_id = state_id;
+        if (city_id) updateData.city_id = city_id;
 
         let userProfile = await ud.usersProfiles.findOne({
             where: {

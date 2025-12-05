@@ -20,6 +20,32 @@ const userValidationRules = (params) => {
           .withMessage("Please choose user role")
           .isNumeric()
           .withMessage("Please enter a valid role "),
+        check("state_id")
+          .custom((value, { req }) => {
+            const roleId = Number(req.body.role_id);
+            if (roleId === 1 || roleId === 2) {
+              if (value === undefined || value === null || value === "") {
+                throw new Error("State is mandatory for BST and CP users");
+              }
+              if (Number.isNaN(Number(value))) {
+                throw new Error("Please enter a valid state id");
+              }
+            }
+            return true;
+          }),
+        check("city_id")
+          .custom((value, { req }) => {
+            const roleId = Number(req.body.role_id);
+            if (roleId === 1 || roleId === 2) {
+              if (value === undefined || value === null || value === "") {
+                throw new Error("City is mandatory for BST and CP users");
+              }
+              if (Number.isNaN(Number(value))) {
+                throw new Error("Please enter a valid city id");
+              }
+            }
+            return true;
+          }),
       ];
 
     case "editUser":
@@ -1158,6 +1184,32 @@ const userValidationRules = (params) => {
         // check("rera").notEmpty().withMessage("Please upload rera document"),
         check("token").notEmpty().withMessage("Please provide valid token"),
         check("id").notEmpty().withMessage("Please enter id"),
+        check("state_id")
+          .optional()
+          .notEmpty()
+          .withMessage("Please provide state id")
+          .isNumeric()
+          .withMessage("Please enter a valid state id"),
+        check("city_id")
+          .optional()
+          .notEmpty()
+          .withMessage("Please provide city id")
+          .isNumeric()
+          .withMessage("Please enter a valid city id"),
+        check("state")
+          .custom((value, { req }) => {
+            if (!value && !req.body.state_id) {
+              throw new Error("State is mandatory for Channel Partner");
+            }
+            return true;
+          }),
+        check("city")
+          .custom((value, { req }) => {
+            if (!value && !req.body.city_id) {
+              throw new Error("City is mandatory for Channel Partner");
+            }
+            return true;
+          }),
       ];
     case "registerCPTokenVerify":
       return [

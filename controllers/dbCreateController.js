@@ -2010,6 +2010,187 @@ exports.getState = async (req, res) => {
             .json({ status: 400, message: "Something Went Wrong" });
     }
 };
+
+exports.getAvailableStates = async (req, res) => {
+    try {
+        const countryId = Number(req.query.country_id) || 101;
+        
+        // Query states where is_available is true OR null (for backward compatibility with existing states)
+        const availableStates = await db.states.findAll({
+            where: {
+                country_id: countryId,
+                [Op.or]: [
+                    { is_available: true },
+                    { is_available: null }
+                ]
+            },
+            order: [['state_name', 'ASC']],
+        });
+        
+        return res
+            .status(200)
+            .json({
+                status: 200,
+                message: "Available State List",
+                data: availableStates,
+            });
+    } catch (error) {
+        logErrorToFile(error);
+        console.error('Error in getAvailableStates:', error.message);
+        return res
+            .status(400)
+            .json({ 
+                status: 400, 
+                message: "Something Went Wrong",
+                error: error.message 
+            });
+    }
+};
+
+exports.getAllStatesWithAvailability = async (req, res) => {
+    try {
+        const countryId = req.query.country_id ? Number(req.query.country_id) : null;
+        
+        const whereClause = countryId ? { country_id: countryId } : {};
+        
+        const states = await db.states.findAll({
+            where: whereClause,
+            attributes: ['state_id', 'state_name', 'is_available', 'country_id'],
+            order: [['state_name', 'ASC']],
+        });
+
+        return res
+            .status(200)
+            .json({
+                status: 200,
+                message: "State List with Availability Status",
+                data: states,
+            });
+    } catch (error) {
+        logErrorToFile(error);
+        console.error('Error in getAllStatesWithAvailability:', error.message);
+        return res
+            .status(400)
+            .json({ 
+                status: 400, 
+                message: "Something Went Wrong",
+                error: error.message 
+            });
+    }
+};
+
+exports.toggleStateAvailability = async (req, res) => {
+    try {
+        const stateId = Number(req.body.state_id);
+        const desiredStatus = req.body.is_available; // Optional: can be true, false, or undefined
+        
+        if (!stateId) {
+            return res
+                .status(400)
+                .json({ 
+                    status: 400, 
+                    message: "state_id is required" 
+                });
+        }
+
+        // Find the state
+        const state = await db.states.findOne({
+            where: {
+                state_id: stateId,
+            },
+        });
+
+        if (!state) {
+            return res
+                .status(404)
+                .json({ 
+                    status: 404, 
+                    message: "State not found" 
+                });
+        }
+
+        // If is_available is provided in request, use it; otherwise toggle
+        let newAvailabilityStatus;
+        if (desiredStatus !== undefined && desiredStatus !== null) {
+            // Explicitly set to the provided value (true or false)
+            newAvailabilityStatus = Boolean(desiredStatus);
+        } else {
+            // Toggle the current status (treat null/undefined as false)
+            const currentStatus = state.is_available === true;
+            newAvailabilityStatus = !currentStatus;
+        }
+        
+        await db.states.update(
+            { is_available: newAvailabilityStatus },
+            {
+                where: {
+                    state_id: stateId,
+                },
+            }
+        );
+
+        return res
+            .status(200)
+            .json({
+                status: 200,
+                message: `State availability ${newAvailabilityStatus ? 'enabled' : 'disabled'} successfully`,
+                data: {
+                    state_id: stateId,
+                    state_name: state.state_name,
+                    is_available: newAvailabilityStatus,
+                },
+            });
+    } catch (error) {
+        logErrorToFile(error);
+        console.error('Error in toggleStateAvailability:', error.message);
+        return res
+            .status(400)
+            .json({ 
+                status: 400, 
+                message: "Something Went Wrong",
+                error: error.message 
+            });
+    }
+};
+exports.getCitiesByState = async (req, res) => {
+    try {
+        const stateId = Number(req.query.state_id);
+        
+        if (!stateId) {
+            return res
+                .status(400)
+                .json({ 
+                    status: 400, 
+                    message: "state_id is required" 
+                });
+        }
+
+        const cities = await db.city.findAll({
+            where: {
+                state_id: stateId,
+            },
+            order: [['city_name', 'ASC']],
+        });
+
+        return res
+            .status(200)
+            .json({
+                status: 200,
+                message: "City List",
+                data: cities,
+            });
+    } catch (error) {
+        logErrorToFile(error);
+        console.error('Error in getCitiesByState:', error.message);
+        return res
+            .status(400)
+            .json({ 
+                status: 400, 
+                message: "Something Went Wrong",
+                error: error.message 
+            });
+    }
+};
 exports.storeStates = async (req, res) => {
     try {
         const data = await db.states.findOne({
@@ -2022,21 +2203,29 @@ exports.storeStates = async (req, res) => {
             return res
                 .status(400)
                 .json({ status: 400, message: "state name already exist" });
-        let stateData = await db.states.create(req.body);
+        
+        // Set is_available to true by default if not provided
+        const stateDataToCreate = {
+            ...req.body,
+            is_available: req.body.is_available !== undefined ? req.body.is_available : true
+        };
+        
+        let stateData = await db.states.create(stateDataToCreate);
         return res
-            .status(400)
-            .json({ status: 200, message: "state name created successfully" });
+            .status(200)
+            .json({ status: 200, message: "state name created successfully", data: stateData });
     } catch (error) {
         logErrorToFile(error)
+        console.error('Error in storeStates:', error);
         return res
             .status(400)
-            .json({ status: 400, message: "Something Went Wrong" });
+            .json({ status: 400, message: "Something Went Wrong", error: error.message });
     }
 };
 
 exports.editStates = async (req, res) => {
     try {
-        const data = await db.findOne({
+        const data = await db.states.findOne({
             where: {
                 country_id: req.body.country_id,
                 state_name: req.body.state_name,
@@ -2054,13 +2243,14 @@ exports.editStates = async (req, res) => {
             },
         });
         return res
-            .status(400)
+            .status(200)
             .json({ status: 200, message: "state name updated successfully" });
     } catch (error) {
         logErrorToFile(error)
+        console.error('Error in editStates:', error);
         return res
             .status(400)
-            .json({ status: 400, message: "Something Went Wrong" });
+            .json({ status: 400, message: "Something Went Wrong", error: error.message });
     }
 };
 

@@ -21,6 +21,12 @@ module.exports = (sequelize, DataTypes) => {
                 key: 'country_id', 
             }
         },
+        
+        is_available: {
+            type: DataTypes.BOOLEAN,
+            allowNull: true,
+            defaultValue: true,
+        },
     },
       { paranoid: true, timestamps: true }
     );
