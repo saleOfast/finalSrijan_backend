@@ -3,7 +3,7 @@ const express = require("express");
 const dbCreateController = require("../controllers/dbCreateController");
 const { resolver } = require("../connectionResolver/resolver");
 const { userValidationRules, validate, superValidate } = require('../validator/validation');
-const { supreProtect } = require('../middleware/authController')
+const { supreProtect, adminOrSuperProtect } = require('../middleware/authController')
 const router = express.Router();
 
 //admin routes
@@ -52,7 +52,7 @@ router
 	.get(dbCreateController.getAllStatesWithAvailability);
 router
 	.route("/admin/state/toggle-availability")
-	.put(supreProtect, dbCreateController.toggleStateAvailability);
+	.put(adminOrSuperProtect, dbCreateController.toggleStateAvailability);
 
 router
 	.route("/admin/city/by-state")

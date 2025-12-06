@@ -2081,10 +2081,10 @@ exports.getAllStatesWithAvailability = async (req, res) => {
 
 exports.toggleStateAvailability = async (req, res) => {
     try {
-        const stateId = Number(req.body.state_id);
-        const desiredStatus = req.body.is_available; // Optional: can be true, false, or undefined
+        const { state_id, is_available } = req.body;
+        const desiredStatus = is_available; // Optional: can be true, false, or undefined
         
-        if (!stateId) {
+        if (!state_id) {
             return res
                 .status(400)
                 .json({ 
@@ -2093,52 +2093,171 @@ exports.toggleStateAvailability = async (req, res) => {
                 });
         }
 
-        // Find the state
-        const state = await db.states.findOne({
+        // Helper function to extract state IDs from various formats
+        const extractStateIds = (stateIdInput) => {
+            const stateIds = [];
+            
+            // Handle array of objects: [{"state_id": 1}, {"state_id": 2}]
+            if (Array.isArray(stateIdInput) && stateIdInput.length > 0 && typeof stateIdInput[0] === 'object' && stateIdInput[0].state_id !== undefined) {
+                stateIdInput.forEach(item => {
+                    const id = Number(item.state_id);
+                    if (!isNaN(id)) stateIds.push(id);
+                });
+            }
+            // Handle single object: {"state_id": 1}
+            else if (typeof stateIdInput === 'object' && stateIdInput !== null && !Array.isArray(stateIdInput) && stateIdInput.state_id !== undefined) {
+                const id = Number(stateIdInput.state_id);
+                if (!isNaN(id)) stateIds.push(id);
+            }
+            // Handle array of numbers or strings: [1, 2, 3] or ["1", "2", "3"]
+            else if (Array.isArray(stateIdInput)) {
+                stateIdInput.forEach(item => {
+                    const id = Number(item);
+                    if (!isNaN(id)) stateIds.push(id);
+                });
+            }
+            // Handle single number or string: 1 or "1"
+            else {
+                const id = Number(stateIdInput);
+                if (!isNaN(id)) stateIds.push(id);
+            }
+            
+            return stateIds;
+        };
+
+        // Extract all state IDs from the input
+        const stateIds = extractStateIds(state_id);
+
+        if (stateIds.length === 0) {
+            return res
+                .status(400)
+                .json({ 
+                    status: 400, 
+                    message: "Invalid state_id format. Please provide valid state_id(s)" 
+                });
+        }
+
+        // Find all states
+        const states = await db.states.findAll({
             where: {
-                state_id: stateId,
+                state_id: {
+                    [Op.in]: stateIds,
+                },
             },
         });
 
-        if (!state) {
+        if (states.length === 0) {
             return res
                 .status(404)
                 .json({ 
                     status: 404, 
-                    message: "State not found" 
+                    message: "No states found with the provided state_id(s)" 
                 });
         }
 
-        // If is_available is provided in request, use it; otherwise toggle
+        // Check if all requested states were found
+        const foundStateIds = states.map(s => s.state_id);
+        const notFoundIds = stateIds.filter(id => !foundStateIds.includes(id));
+        
+        if (notFoundIds.length > 0 && states.length > 0) {
+            // Some states found, some not - continue with found ones
+            console.warn(`Some state IDs not found: ${notFoundIds.join(', ')}`);
+        } else if (notFoundIds.length === stateIds.length) {
+            // None of the states were found
+            return res
+                .status(404)
+                .json({ 
+                    status: 404, 
+                    message: "No states found with the provided state_id(s)" 
+                });
+        }
+
+        // Determine the new availability status
         let newAvailabilityStatus;
         if (desiredStatus !== undefined && desiredStatus !== null) {
             // Explicitly set to the provided value (true or false)
             newAvailabilityStatus = Boolean(desiredStatus);
         } else {
-            // Toggle the current status (treat null/undefined as false)
-            const currentStatus = state.is_available === true;
-            newAvailabilityStatus = !currentStatus;
-        }
-        
-        await db.states.update(
-            { is_available: newAvailabilityStatus },
-            {
-                where: {
-                    state_id: stateId,
-                },
+            // If not provided and multiple states, we need to toggle each individually
+            // For now, if multiple states and no explicit status, we'll use the first state's toggle logic
+            // But actually, we should toggle each state individually
+            if (states.length === 1) {
+                const currentStatus = states[0].is_available === true;
+                newAvailabilityStatus = !currentStatus;
+            } else {
+                // For multiple states without explicit status, we'll need to update each individually
+                // This case is handled below
             }
-        );
+        }
+
+        // Update states
+        const updatedStates = [];
+        
+        if (desiredStatus !== undefined && desiredStatus !== null) {
+            // Update all states to the same status
+            await db.states.update(
+                { is_available: Boolean(desiredStatus) },
+                {
+                    where: {
+                        state_id: {
+                            [Op.in]: foundStateIds,
+                        },
+                    },
+                }
+            );
+            
+            // Fetch updated states for response
+            const updatedStatesData = await db.states.findAll({
+                where: {
+                    state_id: {
+                        [Op.in]: foundStateIds,
+                    },
+                },
+            });
+            
+            updatedStatesData.forEach(state => {
+                updatedStates.push({
+                    state_id: state.state_id,
+                    state_name: state.state_name,
+                    is_available: state.is_available,
+                });
+            });
+        } else {
+            // Toggle each state individually
+            for (const state of states) {
+                const currentStatus = state.is_available === true;
+                const toggledStatus = !currentStatus;
+                
+                await db.states.update(
+                    { is_available: toggledStatus },
+                    {
+                        where: {
+                            state_id: state.state_id,
+                        },
+                    }
+                );
+                
+                updatedStates.push({
+                    state_id: state.state_id,
+                    state_name: state.state_name,
+                    is_available: toggledStatus,
+                });
+            }
+        }
+
+        const message = desiredStatus !== undefined && desiredStatus !== null
+            ? `State availability ${desiredStatus ? 'enabled' : 'disabled'} successfully for ${updatedStates.length} state(s)`
+            : `State availability toggled successfully for ${updatedStates.length} state(s)`;
 
         return res
             .status(200)
             .json({
                 status: 200,
-                message: `State availability ${newAvailabilityStatus ? 'enabled' : 'disabled'} successfully`,
-                data: {
-                    state_id: stateId,
-                    state_name: state.state_name,
-                    is_available: newAvailabilityStatus,
-                },
+                message: message,
+                data: updatedStates,
+                ...(notFoundIds.length > 0 && {
+                    warning: `Some state IDs were not found: ${notFoundIds.join(', ')}`
+                }),
             });
     } catch (error) {
         logErrorToFile(error);

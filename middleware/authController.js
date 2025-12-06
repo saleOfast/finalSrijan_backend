@@ -7,6 +7,7 @@ const model = require('../model')
 
 // declare model index
 const superAdmin = model.supers
+const Client = model.clients
 
 exports.protect = async (req, res, next) => {
     try {
@@ -70,6 +71,74 @@ exports.supreProtect = async (req, res, next) => {
     } catch (error) {
         logErrorToFile(error)
 
+        return res.status(404).json({
+            status: 404,
+            mesage: 'token not valid',
+            data: null
+        })
+    }
+};
+
+// Middleware that accepts both super admin and regular admin tokens
+exports.adminOrSuperProtect = async (req, res, next) => {
+    try {
+        let token;
+        if (
+            req.headers.authorization &&
+            req.headers.authorization.startsWith("Bearer")
+        ) {
+            token = req.headers.authorization.split(" ")[1];
+        }
+        if (!token) {
+            return res.status(404).json({
+                status: 404,
+                mesage: 'token not found',
+                data: null
+            })
+        }
+
+        // token verifying
+        const decoded = await promisify(jwt.verify)(token, process.env.CLIENT_SECRET);
+        
+        // First try to validate as super admin
+        const superAdminUser = await superAdmin.findOne({
+            where: {
+                superCode: decoded.id
+            }
+        });
+
+        if (superAdminUser) {
+            req.user = superAdminUser.dataValues;
+            req.user.isSuperAdmin = true;
+            next();
+            return;
+        }
+
+        // If not super admin, try to validate as regular admin (client admin with isDB = true)
+        const regularAdminUser = await Client.findOne({
+            where: {
+                user_id: decoded.id,
+                isDB: true,
+                user_status: true
+            }
+        });
+
+        if (regularAdminUser) {
+            req.user = regularAdminUser.dataValues;
+            req.user.isSuperAdmin = false;
+            next();
+            return;
+        }
+
+        // If neither super admin nor regular admin found
+        return res.status(404).json({
+            status: 404,
+            mesage: 'token not valid',
+            data: null
+        })
+
+    } catch (error) {
+        logErrorToFile(error)
         return res.status(404).json({
             status: 404,
             mesage: 'token not valid',
