@@ -232,7 +232,7 @@ exports.getDynamicDashboardAdminNav = async (req, res) => {
           FROM
               db_menus AS m1
           LEFT JOIN
-              db_role_permissions AS r1 ON m1.menu_id = r1.menu_id AND r1.role_id = ${req.user.role_id} where m1.menu_type = '${menu_type}' and m1.is_active = true and m1.is_task = 0 and r1.actions = true and m1.deletedAt IS NULL ORDER BY m1.menu_order ASC`, {
+              db_role_permissions AS r1 ON m1.menu_id = r1.menu_id AND r1.role_id = ${req.user.role_id} where m1.menu_type = '${menu_type}' and m1.is_active = true and m1.is_task = 0 and m1.deletedAt IS NULL ORDER BY m1.menu_order ASC`, {
                 type: QueryTypes.SELECT,
             })
         }

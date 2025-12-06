@@ -92,6 +92,13 @@ exports.rolePermission = async (req, res, next,) => {
                 return;
             }
             
+            // Special case: Allow OTP generation without m_id (utility endpoint for lead stage updates)
+            if (req.originalUrl.includes('/sendVisitOTP') && req.method === 'POST') {
+                console.log('OTP generation detected - bypassing m_id requirement');
+                next();
+                return;
+            }
+            
             // for admin permission
             if (req.user.isDB == true) {
                 console.log(req.headers,"=======>>req.headers")

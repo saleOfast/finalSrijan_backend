@@ -125,7 +125,7 @@ module.exports = (sequelize, DataTypes) => {
             },
             state_id: {
                 type: DataTypes.INTEGER,
-                allowNull: true,
+                allowNull: false,
                 references: {
                     model: "db_states",
                     key: "state_id",
@@ -134,7 +134,7 @@ module.exports = (sequelize, DataTypes) => {
 
             city_id: {
                 type: DataTypes.INTEGER,
-                allowNull: true,
+                allowNull: false,
                 references: {
                     model: "db_cities",
                     key: "city_id",

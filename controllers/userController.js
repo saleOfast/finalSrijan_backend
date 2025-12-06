@@ -1893,6 +1893,18 @@ const handleAcceptProcess = async (req, userData, dbUserData) => {
         })
         if (userExistInCPLeads) {
             await userExistInCPLeads.update({ stage: 'ONBOARDED' })
+            
+            // Transfer ownership: Set report_to from CP lead's assigned_to (BST user)
+            // After onboarding, the same BST user who was assigned the lead becomes the CP's owner
+            if (userExistInCPLeads.asssigned_to && userData.role_id == 1) {
+                await userDataInDB.update({ report_to: userExistInCPLeads.asssigned_to });
+                // Also update in admin DB
+                await db.clients.update(
+                    { report_to: userExistInCPLeads.asssigned_to },
+                    { where: { user_code: dbUserData.user_code } }
+                );
+                console.log(`Ownership transferred: CP ${userData.user_id} now reports to BST ${userExistInCPLeads.asssigned_to}`);
+            }
         }
     }
 

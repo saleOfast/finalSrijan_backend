@@ -12,8 +12,8 @@ const { sendSMS } = require("../common/sms");
 // Value: { otp: string, expiresAt: number }
 const CP_VISIT_OTP_STORE = new Map();
 
-function generateSixDigitOTP() {
-    return String(Math.floor(100000 + Math.random() * 900000));
+function generateFourDigitOTP() {
+    return String(Math.floor(1000 + Math.random() * 9000));
 }
 
 // Generate and send OTP to CP mobile for stage change to VISIT
@@ -38,7 +38,7 @@ exports.sendVisitOTP = async (req, res) => {
         if (!lead) return responseError(req, res, "No Lead Found with the Provided CPL ID");
         if (!lead.contact) return responseError(req, res, "Lead does not have a valid contact number");
 
-        const otp = generateSixDigitOTP();
+        const otp = generateFourDigitOTP();
         const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
         const key = makeOtpKey(db_name, cpl_id);
         CP_VISIT_OTP_STORE.set(key, { otp, expiresAt });
@@ -265,11 +265,15 @@ exports.addChannelPartnerLead = async (req, res) => {
             if (cityRecordLegacy) {
                 finalCityId = cityRecordLegacy.city_id;
                 finalCityName = cityRecordLegacy.city_name;
-            } else {
-                console.log(`City "${cityName}" not found in database for state_id ${finalStateId}, proceeding without city_id`);
+        } else {
+            console.log(`City "${cityName}" not found in database for state_id ${finalStateId}, proceeding without city_id`);
             }
         }
-        // Note: city_id is optional, so we don't return an error if it's not provided
+        
+        // Validate city_id: City is mandatory for CP leads
+        if (!finalCityId) {
+            return responseError(req, res, "city_id is required. Please provide city_id or a valid city name.");
+        }
 
         const stage = 'OPEN';
         const status = true;
