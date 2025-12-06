@@ -101,7 +101,7 @@ exports.editRole = async (req, res) => {
     try {
 
         let { role_name, role_id } = req.body
-        if (role_id == 1 || 2 || 3) {
+        if (role_id == 1 || role_id == 2 || role_id == 3) {
             return await responseError(req, res, "Roles cannot be edited")
         }
         let body = req.body
