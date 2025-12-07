@@ -93,6 +93,10 @@ router
 	.route("/admin/userplatformhistory").get(dbCreateController.userplatformhistory)
 
 router
+	.route("/admin/license")
+	.put(adminOrSuperProtect, dbCreateController.updateLicense)
+
+router
 	.route("/checkToken").get(dbCreateController.checkToken)
 
 module.exports = router;

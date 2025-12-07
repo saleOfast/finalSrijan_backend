@@ -1748,6 +1748,193 @@ exports.clientUpdate = async (req, res) => {
 //   })
 // }
 
+/**
+ * Update License Count API
+ * Increases or decreases license count for a specific client
+ * 
+ * Request Body:
+ * {
+ *   "db_name": "MULTI_USER49049649",  // Required: Client database name
+ *   "license_type": "channel",         // Required: crm, channel, dms, sales, media
+ *   "amount": 95,                       // Optional: Amount to add/subtract (can be negative)
+ *   "new_value": 100                    // Optional: Set to specific value (takes precedence over amount)
+ * }
+ */
+exports.updateLicense = async (req, res) => {
+    try {
+        const { db_name, license_type, amount, new_value } = req.body;
+
+        // Validation
+        if (!db_name) {
+            return res.status(400).json({ 
+                status: 400, 
+                message: "db_name is required" 
+            });
+        }
+
+        if (!license_type) {
+            return res.status(400).json({ 
+                status: 400, 
+                message: "license_type is required. Valid types: crm, channel, dms, sales, media" 
+            });
+        }
+
+        // Map license types to database fields and platform IDs
+        const licenseMap = {
+            'crm': { 
+                field: 'no_of_license', 
+                platformId: 1,
+                name: 'CRM'
+            },
+            'channel': { 
+                field: 'no_of_channel_license', 
+                platformId: 4,
+                name: 'CHANNEL'
+            },
+            'dms': { 
+                field: 'no_of_dms_license', 
+                platformId: 2,
+                name: 'DMS'
+            },
+            'sales': { 
+                field: 'no_of_sales_license', 
+                platformId: 3,
+                name: 'SALES'
+            },
+            'media': { 
+                field: 'no_of_media_license', 
+                platformId: 5,
+                name: 'MEDIA'
+            }
+        };
+
+        const licenseConfig = licenseMap[license_type.toLowerCase()];
+        if (!licenseConfig) {
+            return res.status(400).json({ 
+                status: 400, 
+                message: "Invalid license_type. Valid types: crm, channel, dms, sales, media" 
+            });
+        }
+
+        // Find the client
+        const client = await db.clients.findOne({
+            where: {
+                db_name: db_name,
+                isDB: 1
+            }
+        });
+
+        if (!client) {
+            return res.status(404).json({ 
+                status: 404, 
+                message: "Client not found with the provided db_name" 
+            });
+        }
+
+        // Get current license value
+        const currentValue = Number(client[licenseConfig.field]) || 0;
+
+        // Calculate new value
+        let newLicenseValue;
+        if (new_value !== undefined && new_value !== null) {
+            // Set to specific value
+            newLicenseValue = Number(new_value);
+            if (isNaN(newLicenseValue) || newLicenseValue < 0) {
+                return res.status(400).json({ 
+                    status: 400, 
+                    message: "new_value must be a positive number" 
+                });
+            }
+        } else if (amount !== undefined && amount !== null) {
+            // Add/subtract amount
+            const changeAmount = Number(amount);
+            if (isNaN(changeAmount)) {
+                return res.status(400).json({ 
+                    status: 400, 
+                    message: "amount must be a valid number" 
+                });
+            }
+            newLicenseValue = currentValue + changeAmount;
+            if (newLicenseValue < 0) {
+                return res.status(400).json({ 
+                    status: 400, 
+                    message: `Cannot decrease license below 0. Current value: ${currentValue}, Attempted change: ${changeAmount}` 
+                });
+            }
+        } else {
+            return res.status(400).json({ 
+                status: 400, 
+                message: "Either 'amount' or 'new_value' must be provided" 
+            });
+        }
+
+        // Update the license count
+        const updateData = {};
+        updateData[licenseConfig.field] = newLicenseValue;
+
+        await db.clients.update(updateData, {
+            where: {
+                db_name: db_name,
+                isDB: 1
+            }
+        });
+
+        // Log the change in platformHistory if the value changed
+        if (newLicenseValue !== currentValue && newLicenseValue > 0) {
+            await db.platformHistory.create({
+                user_id: client.user_id,
+                platform_id: licenseConfig.platformId,
+                platformHistory_count: newLicenseValue,
+                updated_by: req.user?.user_id || client.user_id
+            });
+        }
+
+        // Get updated client data
+        const updatedClient = await db.clients.findOne({
+            where: {
+                db_name: db_name,
+                isDB: 1
+            },
+            attributes: [
+                'db_name',
+                'no_of_license',
+                'no_of_channel_license',
+                'no_of_dms_license',
+                'no_of_sales_license',
+                'no_of_media_license'
+            ]
+        });
+
+        return res.status(200).json({
+            status: 200,
+            message: `${licenseConfig.name} license updated successfully`,
+            data: {
+                db_name: db_name,
+                license_type: license_type,
+                previous_value: currentValue,
+                new_value: newLicenseValue,
+                change: newLicenseValue - currentValue,
+                all_licenses: {
+                    crm: updatedClient.no_of_license || 0,
+                    channel: updatedClient.no_of_channel_license || 0,
+                    dms: updatedClient.no_of_dms_license || 0,
+                    sales: updatedClient.no_of_sales_license || 0,
+                    media: updatedClient.no_of_media_license || 0
+                }
+            }
+        });
+
+    } catch (error) {
+        logErrorToFile(error);
+        console.error("updateLicense error:", error);
+        return res.status(400).json({
+            status: 400,
+            message: "Something went wrong while updating license",
+            error: error.message
+        });
+    }
+};
+
 // if (clientData.no_of_channel_license > 0 && userData.no_of_channel_license != clientData.no_of_channel_license) {
 //   await db.platformHistory.create({
 //     user_id: userData.user_id,
