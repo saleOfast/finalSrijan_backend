@@ -53,6 +53,7 @@ const opporProductRoutes = require("./routes/opporProductRoutes");
 const FieldRoutes = require("./routes/FieldRoutes");
 // const emailRoutes = require("./routes/emailRoutes");
 const EmailConfigRoutes = require("./routes/emailConfigRoutes")
+const cpcategoryRoutes = require("./routes/cpcategoryRoutes");
 
 //-------mart model--------//
 const BrandRoutes = require("./routes/mart/BrandRoutes");
@@ -196,6 +197,7 @@ app.use("/api/v1/db/message", messageRoutes);
 app.use("/api/v1/db/oppro", opporProductRoutes);
 app.use("/api/v1/db/field", FieldRoutes);
 app.use("/api/v1/db/emailConfig", EmailConfigRoutes);
+app.use("/api/v1/db/cpcategory", cpcategoryRoutes);
 
 
 //-------mart model--------//
