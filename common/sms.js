@@ -104,12 +104,41 @@ async function sendSMS(mobile, message) {
     params.append('template_id', templateId);
     params.append('body', body);
     
+    // // Log the exact request being sent (for debugging)
+    // console.log('[SMS REQUEST] Sending SMS request:', {
+    //   url: 'https://api.vox-cpaas.in/sendsms',
+    //   projectid: projectId.substring(0, 15) + '...',
+    //   authtoken: authToken.substring(0, 15) + '...',
+    //   from: from,
+    //   to: formattedPhone,
+    //   template_id: templateId,
+    //   body: body.substring(0, 100) + (body.length > 100 ? '...' : ''),
+    //   otp: otp || 'NOT EXTRACTED'
+    // });
+    
     // Send SMS via vox-cpaas.in API
     const response = await axios.post('https://api.vox-cpaas.in/sendsms', params, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
     });
+    
+    // // Check if the API response indicates success
+    // const responseData = response.data;
+    // console.log(`[SMS API Response]`, responseData);
+    
+    // // Check for error in response (some APIs return 200 but with error in body)
+    // if (responseData && (responseData.error || responseData.status === 'error' || responseData.status === 'failed')) {
+    //   const errorMsg = responseData.message || responseData.error || 'SMS API returned an error';
+    //   console.error(`[SMS ERROR] API Error: ${errorMsg}`, responseData);
+    //   return {
+    //     success: false,
+    //     provider: 'vox-cpaas',
+    //     mobile: formattedPhone,
+    //     error: errorMsg,
+    //     response: responseData
+    //   };
+    // }
     
     console.log(`[SMS SUCCESS] To: ${formattedPhone} | OTP: ${otp || 'N/A'}`);
     return { 
