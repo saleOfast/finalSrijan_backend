@@ -985,13 +985,13 @@ exports.getUsersByRoleID = async (req, res) => {
                 {
                     createdAt: {
                         [Op.gte]: startDate,
-                        [Op.lte]: endDate
+                        [Op.lt]: endDate  // Use [Op.lt] since endDate is already +1 day
                     }
                 },
                 {
                     onboarding_date: {
                         [Op.gte]: startDate,
-                        [Op.lte]: endDate
+                        [Op.lt]: endDate  // Use [Op.lt] since endDate is already +1 day
                     }
                 }
             ];
@@ -1005,33 +1005,38 @@ exports.getUsersByRoleID = async (req, res) => {
             //     [Op.lte]: endDate      // Less than (but not including) next day's 00:00:00
             // };
         }
-        else {
-            let weekStartDate = getCurrentWeekStartDate();
-            let weekEndDate = getCurrentWeekEndDate();
+        else if (req.query.role_id != 1) {
+            // Only apply default week filtering for non-CP users
+            // For CP users (role_id = 1), show all onboarded CPs regardless of creation/onboarding date
+            // This ensures onboarded CPs are visible even if they were created weeks/months ago
+            
+            // Get week dates as Date objects for proper datetime comparison
+            let weekStartDateStr = getCurrentWeekStartDate();
+            let weekEndDateStr = getCurrentWeekEndDate();
+            
+            // Convert to Date objects and set proper times
+            let weekStartDate = new Date(weekStartDateStr); // Start of week at 00:00:00
+            let weekEndDate = new Date(weekEndDateStr);     // End of week date
+            weekEndDate.setDate(weekEndDate.getDate() + 1); // Add 1 day to include full end day
+            weekEndDate.setHours(0, 0, 0, 0); // Set to start of next day for [Op.lt] comparison
+            
             whereClause[Op.or] = [
                 {
                     createdAt: {
                         [Op.gte]: weekStartDate,
-                        [Op.lte]: weekEndDate
+                        [Op.lt]: weekEndDate  // Use [Op.lt] (less than) to include full end day
                     }
                 },
                 {
                     onboarding_date: {
                         [Op.gte]: weekStartDate,
-                        [Op.lte]: weekEndDate
+                        [Op.lt]: weekEndDate  // Use [Op.lt] (less than) to include full end day
                     }
                 }
             ];
-
-            // whereClause.createdAt = {
-            //     [Op.gte]: weekStartDate, // Greater than or equal to current date at midnight
-            //     [Op.lte]: weekEndDate// Less than current date + 1 day at midnight
-            // }
-            // whereClause.onboarding_date = {
-            //     [Op.gte]: weekStartDate,  // Start from f_date 00:00:00
-            //     [Op.lte]: weekEndDate      // Less than (but not including) next day's 00:00:00
-            // };
         }
+        // If role_id = 1 (CP users) and no date filters, don't apply any date filtering
+        // This ensures all onboarded CPs are visible regardless of when they were created or onboarded
 
         // BST users: Only see CP users assigned to them (report_to = BST user_id)
         if (req.user.role_id == 2) {
