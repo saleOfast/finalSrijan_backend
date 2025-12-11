@@ -8,40 +8,74 @@ exports.givePermission = async (req, res) => {
     try {
         let permissionData = req.body
         let db_name = req.headers.db;
+        const role_id = req.query.id;
 
+        if (!role_id) {
+            return await responseError(req, res, "Role ID is required");
+        }
+
+        // Get menu_ids from request to identify which permissions should be processed
+        const requestMenuIds = permissionData.map(item => item.menu_id);
+
+        // Process each permission in the request
         for (let i = 0; i < permissionData.length; i++) {
             const item = permissionData[i];
+            const actionsValue = item.actions === true || item.actions === 1 || item.actions === 'true' || item.actions === '1';
+            
             const findRolePermission = await req.config.role_permissions.findOne({
                 where: {
-                    role_id: req.query.id,
+                    role_id: role_id,
                     menu_id: item.menu_id
                 },
                 paranoid: false
             });
 
             if (findRolePermission == null) {
-                await req.config.role_permissions.create({
-                    role_id: req.query.id,
-                    menu_id: item.menu_id,
-                    actions: item.actions
-                });
+                // Only create permission if actions is true
+                if (actionsValue) {
+                    await req.config.role_permissions.create({
+                        role_id: role_id,
+                        menu_id: item.menu_id,
+                        actions: true
+                    });
+                }
+                // If actions is false and permission doesn't exist, skip (don't create unnecessary records)
             } else {
-                const result = await req.config.sequelize.query(
-                    `UPDATE ${db_name}.db_role_permissions SET actions = :is_active WHERE permission_id = :permission_id`,
-                    {
-                        replacements: { is_active: item.actions, permission_id: findRolePermission.permission_id },
-                        type: req.config.Sequelize.QueryTypes.UPDATE
-                    }
-                );
-
-                // await req.config.role_permissions.update({
-                //     actions: item.actions ? 1 : 0
-                // }, {
-                //     where: {
-                //         permission_id: findRolePermission.permission_id
-                //     }
-                // });
+                // Permission exists, update it
+                if (actionsValue) {
+                    // Set to true (1)
+                    await req.config.sequelize.query(
+                        `UPDATE ${db_name}.db_role_permissions SET actions = 1, updatedAt = NOW() WHERE permission_id = :permission_id`,
+                        {
+                            replacements: { permission_id: findRolePermission.permission_id },
+                            type: req.config.Sequelize.QueryTypes.UPDATE
+                        }
+                    );
+                } else {
+                    // Set to false (0) or delete the permission
+                    // Option 1: Set to false (maintains history)
+                    await req.config.sequelize.query(
+                        `UPDATE ${db_name}.db_role_permissions SET actions = 0, updatedAt = NOW() WHERE permission_id = :permission_id`,
+                        {
+                            replacements: { permission_id: findRolePermission.permission_id },
+                            type: req.config.Sequelize.QueryTypes.UPDATE
+                        }
+                    );
+                    // Option 2: Delete the permission (uncomment if you prefer to delete instead of setting to false)
+                    // await findRolePermission.destroy();
+                }
             }
+        }
+
+        // Optional: Remove permissions that exist in DB but are not in the request
+        // This ensures that if a menu was previously granted but is not in the new request, it gets removed
+        if (requestMenuIds.length > 0) {
+            await req.config.role_permissions.destroy({
+                where: {
+                    role_id: role_id,
+                    menu_id: { [Op.notIn]: requestMenuIds }
+                }
+            });
         }
 
         return await responseSuccess(req, res, "role permitted succesfully")
@@ -296,6 +330,33 @@ exports.permissionCheckAtLogin = async (req, res) => {
         });
 
         return await responseSuccess(req, res, "role permitted list", tree)
+
+    } catch (error) {
+        logErrorToFile(error)
+        console.log(error)
+        return await responseError(req, res, "Something Went Wrong")
+    }
+}
+
+exports.getRolePermissionsFiltered = async (req, res) => {
+    try {
+        const role_id = req.query.role_id || req.params.role_id;
+
+        if (!role_id) {
+            return await responseError(req, res, "Role ID is required");
+        }
+
+        // Filter role permissions where role_id matches, actions = 1 (true), and deletedAt is null
+        // Since paranoid: true is set in the model, findAll automatically excludes soft-deleted records
+        const rolePermissions = await req.config.role_permissions.findAll({
+            where: {
+                role_id: role_id,
+                actions: true // or 1, both work for BOOLEAN
+            },
+            attributes: ['permission_id', 'role_id', 'menu_id', 'actions', 'createdAt', 'updatedAt']
+        });
+
+        return await responseSuccess(req, res, "Role permissions filtered successfully", rolePermissions);
 
     } catch (error) {
         logErrorToFile(error)

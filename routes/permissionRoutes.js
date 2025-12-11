@@ -24,4 +24,9 @@ router
 router
     .route("/admin-nav")
     .get(resolver, permissionController.getDynamicDashboardAdminNav)
+
+router
+    .route("/filtered")
+    .get(resolver, permissionController.getRolePermissionsFiltered)
+
 module.exports = router
