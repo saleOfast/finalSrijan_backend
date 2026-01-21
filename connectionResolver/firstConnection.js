@@ -7,7 +7,7 @@ exports.first = async (db_name, req, res) => {
     const sequelize2 = new Sequelize(
       db_name, dbConfig.USER, dbConfig.PASSWORD,
       {
-        host: 'localhost',
+        host: dbConfig.HOST || 'localhost',
         dialect: "mysql",
         port: dbConfig.PORT,
         logging: false,
@@ -202,10 +202,12 @@ exports.first = async (db_name, req, res) => {
 
     try {
       await Userdb.sequelize.sync({ alter: false });
-      console.log("db synced for first time");
+      console.log(`db synced for first time: ${db_name}`);
     } catch (error) {
-      console.log("Ignoring error");
-      console.log(error);
+      logErrorToFile(error);
+      console.error(`Error syncing database ${db_name}:`, error);
+      // Re-throw error so caller knows sync failed
+      throw error;
     }
     return Userdb;
   } catch (error) {

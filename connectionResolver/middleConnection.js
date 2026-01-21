@@ -5,7 +5,7 @@ exports.middle = async (db_name, req, res) => {
   try {
     // for our home server
     const sequelize2 = new Sequelize(db_name, dbConfig.USER, dbConfig.PASSWORD, {
-      host: 'localhost',
+      host: dbConfig.HOST,
       dialect: "mysql",
       port: dbConfig.PORT,
       logging: false,

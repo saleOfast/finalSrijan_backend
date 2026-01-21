@@ -56,8 +56,9 @@ exports.resolver = async (req, res, next) => {
           dbConfig.USER,
           dbConfig.PASSWORD,
           {
-            host: "localhost",
+            host: dbConfig.HOST,
             dialect: "mysql",
+            port: dbConfig.PORT,
             logging: false,
             timezone: "+05:30",
             pool: {

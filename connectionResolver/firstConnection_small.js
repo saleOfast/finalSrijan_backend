@@ -5,7 +5,7 @@ exports.first_small = async (db_name, req, res) => {
   try {
     // for our home server
     const sequelize2 = new Sequelize(db_name, dbConfig.USER, dbConfig.PASSWORD, {
-      host: 'localhost',
+      host: dbConfig.HOST || 'localhost',
       dialect: "mysql",
       port: dbConfig.PORT,
       logging: false,

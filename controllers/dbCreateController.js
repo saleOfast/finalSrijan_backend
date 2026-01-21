@@ -437,6 +437,14 @@ exports.db_creater = async (req, res) => {
 
             // first time sync db
             let nUserDB = await first(`${PREFIX}${userCode}`, req, res);
+            
+            // Check if sync failed
+            if (nUserDB && nUserDB.status === 400) {
+                await process.cleanup();
+                return res.status(400).json({ 
+                    message: `Failed to sync database: ${nUserDB.message || 'Unknown error'}` 
+                });
+            }
 
             await db.sequelize.query(`SET FOREIGN_KEY_CHECKS=0;`, {
                 type: QueryTypes.RAW,
@@ -488,8 +496,8 @@ exports.db_creater = async (req, res) => {
             });
 
             await db.sequelize.query(`
-                INSERT INTO ${PREFIX}${userCode}.db_states(state_id, state_name, country_id, createdAt, updatedAt, deletedAt)
-                SELECT * FROM daily_crm.db_states;
+                INSERT INTO ${PREFIX}${userCode}.db_states(state_id, state_name, country_id, is_available, createdAt, updatedAt, deletedAt)
+                SELECT state_id, state_name, country_id, is_available, createdAt, updatedAt, deletedAt FROM daily_crm.db_states;
             `, {
                 type: QueryTypes.INSERT,
                 transaction: process,
@@ -914,6 +922,16 @@ exports.db_login = async (req, res) => {
         }
 
         let userDb = await middle(userData.db_name, req, res);
+        
+        // Check if userDb is a valid database instance (not an error object)
+        if (!userDb || !userDb.users) {
+            return res.status(500).json({
+                status: 500,
+                message: "Database connection failed. Please try again later.",
+                data: null,
+            });
+        }
+        
         const isSame = await bcrypt.compare(password, userData.password);
         let platformData = [];
         if (userData && isSame) {
@@ -924,7 +942,7 @@ exports.db_login = async (req, res) => {
             });
 
             if (userData.isDB) {
-                // user is admin
+                // user is admin - show only CHANNEL and SETTING platforms
                 if (type !== 'common') {
                 //     let platformID = type == 'crm' ? 1 : type == 'dms' ? 2 : type == 'sales' ? 3 : 4
                 //     let checkpermissionData = await userDb.platform.findOne({
@@ -939,6 +957,9 @@ exports.db_login = async (req, res) => {
                 platformData = await userDb.platform.findAll({
                     where: {
                         is_active: true,
+                        platform_name: {
+                            [Op.in]: ['CHANNEL', 'SETTING']
+                        }
                     },
                 });
 
