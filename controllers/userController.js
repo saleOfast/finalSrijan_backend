@@ -354,9 +354,27 @@ exports.createUser = async (req, res) => {
                 );
             }
 
-            data.user_id = dbUserData.user_id;
+            // Only include fields that belong to userProfile model
+            let profileData = {
+                user_id: dbUserData.user_id,
+            };
+            
+            // Only add profile-specific fields if they exist in data
+            const profileFields = ['div_id', 'dep_id', 'des_id', 'aadhar_no', 'aadhar_file', 
+                'pan_no', 'pan_file', 'dl_no', 'dl_file', 'rera_no', 'rera_file', 
+                'c_cheque', 'c_cheque_file', 'user_image_file', 'bank_name', 
+                'account_holder_name', 'account_no', 'bank_ifsc_code', 'branch',
+                'contact_person', 'credit_limit', 'incorporation_certificate', 
+                'payment_method', 'distributor_rating', 'address_proof', 
+                'gst_registration', 'banking_details'];
+            
+            profileFields.forEach(field => {
+                if (data[field] !== undefined && data[field] !== null) {
+                    profileData[field] = data[field];
+                }
+            });
 
-            let userProfileData = await req.config.usersProfiles.create(data, {
+            let userProfileData = await req.config.usersProfiles.create(profileData, {
                 transaction: processClient,
             });
 
@@ -985,13 +1003,13 @@ exports.getUsersByRoleID = async (req, res) => {
                 {
                     createdAt: {
                         [Op.gte]: startDate,
-                        [Op.lte]: endDate
+                        [Op.lt]: endDate  // Use [Op.lt] since endDate is already +1 day
                     }
                 },
                 {
                     onboarding_date: {
                         [Op.gte]: startDate,
-                        [Op.lte]: endDate
+                        [Op.lt]: endDate  // Use [Op.lt] since endDate is already +1 day
                     }
                 }
             ];
@@ -1005,33 +1023,38 @@ exports.getUsersByRoleID = async (req, res) => {
             //     [Op.lte]: endDate      // Less than (but not including) next day's 00:00:00
             // };
         }
-        else {
-            let weekStartDate = getCurrentWeekStartDate();
-            let weekEndDate = getCurrentWeekEndDate();
+        else if (req.query.role_id != 1) {
+            // Only apply default week filtering for non-CP users
+            // For CP users (role_id = 1), show all onboarded CPs regardless of creation/onboarding date
+            // This ensures onboarded CPs are visible even if they were created weeks/months ago
+            
+            // Get week dates as Date objects for proper datetime comparison
+            let weekStartDateStr = getCurrentWeekStartDate();
+            let weekEndDateStr = getCurrentWeekEndDate();
+            
+            // Convert to Date objects and set proper times
+            let weekStartDate = new Date(weekStartDateStr); // Start of week at 00:00:00
+            let weekEndDate = new Date(weekEndDateStr);     // End of week date
+            weekEndDate.setDate(weekEndDate.getDate() + 1); // Add 1 day to include full end day
+            weekEndDate.setHours(0, 0, 0, 0); // Set to start of next day for [Op.lt] comparison
+            
             whereClause[Op.or] = [
                 {
                     createdAt: {
                         [Op.gte]: weekStartDate,
-                        [Op.lte]: weekEndDate
+                        [Op.lt]: weekEndDate  // Use [Op.lt] (less than) to include full end day
                     }
                 },
                 {
                     onboarding_date: {
                         [Op.gte]: weekStartDate,
-                        [Op.lte]: weekEndDate
+                        [Op.lt]: weekEndDate  // Use [Op.lt] (less than) to include full end day
                     }
                 }
             ];
-
-            // whereClause.createdAt = {
-            //     [Op.gte]: weekStartDate, // Greater than or equal to current date at midnight
-            //     [Op.lte]: weekEndDate// Less than current date + 1 day at midnight
-            // }
-            // whereClause.onboarding_date = {
-            //     [Op.gte]: weekStartDate,  // Start from f_date 00:00:00
-            //     [Op.lte]: weekEndDate      // Less than (but not including) next day's 00:00:00
-            // };
         }
+        // If role_id = 1 (CP users) and no date filters, don't apply any date filtering
+        // This ensures all onboarded CPs are visible regardless of when they were created or onboarded
 
         // BST users: Only see CP users assigned to them (report_to = BST user_id)
         if (req.user.role_id == 2) {
@@ -1073,7 +1096,7 @@ exports.getUsersByRoleID = async (req, res) => {
                 role_id: req.query.role_id,
                 doc_verification: 2,
             },
-            attributes: ["user_id", "user", "user_code", "createdAt", "report_to", "organisation", "user_l_name", "email", "contact_number", "organisation", "db_name", "isDB", "user_status", "doc_verification", "reject_reason", "role_id", "address", "pincode", "cpt_id", "onboarding_date", "city_id", "state_id", "country_id",
+            attributes: ["user_id", "user", "user_code", "createdAt", "report_to", "organisation", "user_l_name", "email", "contact_number", "organisation", "db_name", "isDB", "user_status", "doc_verification", "reject_reason", "role_id", "address", "pincode", "cpt_id", "cp_category", "onboarding_date", "city_id", "state_id", "country_id",
                 // [req.config.sequelize.literal(`CASE 
                 //     WHEN "onboarding_date" IS NOT NULL THEN "onboarding_date"
                 //     ELSE "createdAt"
@@ -1816,12 +1839,30 @@ exports.updateUser = async (req, res) => {
                 : `The Channel Partner's request has been successfully assigned.`;
         }
 
-        // Update user profile
+        // Update user profile - only include profile-specific fields
         data = await userDataInDB.update(dbUserData);
 
-        await req.config.usersProfiles.update(dbUserData, {
-            where: { user_id: userDataInDB.user_id },
+        // Filter to only include profile fields
+        const profileFields = ['div_id', 'dep_id', 'des_id', 'aadhar_no', 'aadhar_file', 
+            'pan_no', 'pan_file', 'dl_no', 'dl_file', 'rera_no', 'rera_file', 
+            'c_cheque', 'c_cheque_file', 'user_image_file', 'bank_name', 
+            'account_holder_name', 'account_no', 'bank_ifsc_code', 'branch',
+            'contact_person', 'credit_limit', 'incorporation_certificate', 
+            'payment_method', 'distributor_rating', 'address_proof', 
+            'gst_registration', 'banking_details'];
+        
+        let profileUpdateData = {};
+        profileFields.forEach(field => {
+            if (dbUserData[field] !== undefined && dbUserData[field] !== null) {
+                profileUpdateData[field] = dbUserData[field];
+            }
         });
+
+        if (Object.keys(profileUpdateData).length > 0) {
+            await req.config.usersProfiles.update(profileUpdateData, {
+                where: { user_id: userDataInDB.user_id },
+            });
+        }
 
         if (dbUserData.isAssigned == true) {
             return res.status(200).json({ status: 200, message, data });
@@ -2653,8 +2694,27 @@ exports.registerBulkUser = async (req, res) => {
 
                 await db.clients.create(item);
                 let dbUserData = await req.config.users.create(item);
-                item.user_id = dbUserData.user_id;
-                await req.config.usersProfiles.create(item);
+                
+                // Only include fields that belong to userProfile model
+                let profileData = {
+                    user_id: dbUserData.user_id,
+                };
+                
+                const profileFields = ['div_id', 'dep_id', 'des_id', 'aadhar_no', 'aadhar_file', 
+                    'pan_no', 'pan_file', 'dl_no', 'dl_file', 'rera_no', 'rera_file', 
+                    'c_cheque', 'c_cheque_file', 'user_image_file', 'bank_name', 
+                    'account_holder_name', 'account_no', 'bank_ifsc_code', 'branch',
+                    'contact_person', 'credit_limit', 'incorporation_certificate', 
+                    'payment_method', 'distributor_rating', 'address_proof', 
+                    'gst_registration', 'banking_details'];
+                
+                profileFields.forEach(field => {
+                    if (item[field] !== undefined && item[field] !== null) {
+                        profileData[field] = item[field];
+                    }
+                });
+                
+                await req.config.usersProfiles.create(profileData);
                 return item;
             })
         );
@@ -2710,7 +2770,7 @@ exports.registrationTokenVerification = async (req, res) => {
 
 exports.cpCompleteRegistration = async (req, res) => {
     try {
-        const { token, name, mobile, user_l_name, gst, organisation, address, city_id, state_id, city, state } = req.body;
+        const { token, name, mobile, user_l_name, gst, organisation, address, city_id, state_id, city, state, cp_category } = req.body;
         const decoded = await promisify(jwt.verify)(token, process.env.CLIENT_SECRET);
         const currentTime = Math.floor(Date.now() / 1000); // Current time in seconds
         if (decoded && decoded.exp < currentTime)
@@ -2786,20 +2846,24 @@ exports.cpCompleteRegistration = async (req, res) => {
         user.contact_number = mobile;
         user.doc_verification = 1;
 
-        let updateData = {};
-        updateData.aadhar_file = aadhar;
-        updateData.pan_file = pan;
-        updateData.rera_file = rera;
-        updateData.c_cheque_file = cheque;
-        updateData.user_id = decoded.id;
-        updateData.user_l_name = user_l_name;
-        updateData.gst = gst;
-        updateData.organisation = organisation;
-        updateData.address = address;
-        updateData.country_id = 101;
+        // Separate data for user table and userProfile table
+        let userUpdateData = {};
+        userUpdateData.user_l_name = user_l_name;
+        userUpdateData.gst = gst;
+        userUpdateData.organisation = organisation;
+        userUpdateData.address = address;
+        userUpdateData.country_id = 101;
         // Note: state and city fields removed from model - use state_id and city_id instead
-        if (state_id) updateData.state_id = state_id;
-        if (city_id) updateData.city_id = city_id;
+        if (state_id) userUpdateData.state_id = state_id;
+        if (city_id) userUpdateData.city_id = city_id;
+        if (cp_category) userUpdateData.cp_category = cp_category;
+
+        let profileUpdateData = {};
+        profileUpdateData.aadhar_file = aadhar;
+        profileUpdateData.pan_file = pan;
+        profileUpdateData.rera_file = rera;
+        profileUpdateData.c_cheque_file = cheque;
+        profileUpdateData.user_id = decoded.id;
 
         let userProfile = await ud.usersProfiles.findOne({
             where: {
@@ -2809,16 +2873,12 @@ exports.cpCompleteRegistration = async (req, res) => {
 
         if (userProfile) {
             // Update existing record
-            const userDATA = await user.update(updateData);
-
-            userProfile = await ud.usersProfiles.update(updateData, {
-                where: {
-                    user_id: decoded.id,
-                },
-            });
+            await user.update(userUpdateData);
+            await userProfile.update(profileUpdateData);
         } else {
             // Create new record
-            userProfile = await ud.usersProfiles.create(updateData);
+            await user.update(userUpdateData);
+            userProfile = await ud.usersProfiles.create(profileUpdateData);
         }
         // First profile save then save user
         await user.save();
@@ -3603,21 +3663,23 @@ exports.dmsCompleteRegistration = async (req, res) => {
         user.contact_number = req.body.contact_number;
         user.doc_verification = 1;
 
-        let updateData = {};
+        // Separate data for user table and userProfile table
+        let userUpdateData = {};
+        userUpdateData.user_l_name = user_l_name;
+        userUpdateData.organisation = organisation;
+        userUpdateData.address = address;
+        userUpdateData.country_id = 101;
+        if (city_id) userUpdateData.city_id = city_id;
+        if (state_id) userUpdateData.state_id = state_id;
 
-        updateData.aadhar_file = aadhar;
-        updateData.pan_file = pan;
-        updateData.incorporation_certificate = inc_cer;
-        updateData.address_proof = add_pr;
-        updateData.banking_details = banking_details;
-        updateData.user_id = decoded.id;
-        updateData.user_l_name = user_l_name;
-        updateData.gst_registration = gst_reg;
-        updateData.organisation = organisation;
-        updateData.address = address;
-        updateData.country_id = 101;
-        updateData.city_id = city_id;
-        updateData.state_id = state_id;
+        let profileUpdateData = {};
+        profileUpdateData.aadhar_file = aadhar;
+        profileUpdateData.pan_file = pan;
+        profileUpdateData.incorporation_certificate = inc_cer;
+        profileUpdateData.address_proof = add_pr;
+        profileUpdateData.banking_details = banking_details;
+        profileUpdateData.gst_registration = gst_reg;
+        profileUpdateData.user_id = decoded.id;
 
         let userProfile = await ud.usersProfiles.findOne({
             where: {
@@ -3626,15 +3688,11 @@ exports.dmsCompleteRegistration = async (req, res) => {
         });
 
         if (userProfile) {
-            const userDATA = await user.update(updateData);
-
-            userProfile = await ud.usersProfiles.update(updateData, {
-                where: {
-                    user_id: decoded.id,
-                },
-            });
+            await user.update(userUpdateData);
+            await userProfile.update(profileUpdateData);
         } else {
-            userProfile = await ud.usersProfiles.create(updateData);
+            await user.update(userUpdateData);
+            userProfile = await ud.usersProfiles.create(profileUpdateData);
         }
 
         await user.save();

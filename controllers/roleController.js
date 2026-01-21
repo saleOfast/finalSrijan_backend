@@ -27,7 +27,6 @@ exports.storeRole = async (req, res) => {
                 actions: 1,
                 createdAt: now,
                 updatedAt: now,
-                deletedAt: now
             });
         }
 
