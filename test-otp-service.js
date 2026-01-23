@@ -22,7 +22,7 @@ const TEST_DB_NAME = 'YOUR_DATABASE_NAME';
 const TEST_CPL_ID = 123; // Replace with actual CPL ID
 
 // For Password Reset OTP Test
-const TEST_EMAIL = 'user@example.com'; // Replace with actual user email
+const TEST_EMAIL = 'agautam@gmail.com'; // Replace with actual user email
 // =======================================================
 
 // Colors for console output

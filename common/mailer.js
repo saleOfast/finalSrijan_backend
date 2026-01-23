@@ -5,9 +5,9 @@ const sendEmail = async (
     { email, subject, message, resetURL,
         host = 'smtp.office365.com',
         port = 587,
-        user = 'info@theprosperity.in',
-        pass = 'Prosperity@2024#',
-        from = 'info@theprosperity.in',
+        user = 'srijanbandhan@srijanrealty.in',
+        pass = 'wsnggzdwrglpjlmj',
+        from = 'srijanbandhan@srijanrealty.in',
     }) => {
 
     // { email, subject, message, resetURL,
@@ -61,7 +61,7 @@ const sendEmail = async (
 
 
     const mailOptions = {
-        from: `NK Realtors <${from}>`,
+        from: `Srijan Bandhan <${from}>`,
         to: email,
         subject: subject,
         html: message,
