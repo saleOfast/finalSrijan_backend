@@ -1,5 +1,104 @@
 const { responseError, responseSuccess } = require("../helper/responce");
 const { sendEmail } = require("../common/mailer");
+const { Op } = require("sequelize");
+
+/**
+ * Helper function to find CP (Channel Partner) user by matching CP_Name from ERP
+ * Tries multiple matching strategies:
+ * 1. Match by user_code if ERP sends it
+ * 2. Match CP_Name with user.organisation
+ * 3. Match CP_Name with (user.user + user.user_l_name)
+ * 4. Match by email if available
+ * 
+ * @param {Object} req - Request object with req.config
+ * @param {String} cpName - CP name from ERP (CP_Name field)
+ * @param {String} cpCode - CP code from ERP (optional, user_code)
+ * @param {String} email - Email from ERP (optional, for fallback matching)
+ * @returns {Object|null} - CP user object or null if not found
+ */
+const findCPUser = async (req, cpName, cpCode = null, email = null) => {
+  try {
+    if (!cpName && !cpCode && !email) {
+      return null;
+    }
+
+    // Strategy 1: Match by user_code (most reliable - this is what we send to ERP)
+    if (cpCode) {
+      const cpByCode = await req.config.users.findOne({
+        where: {
+          user_code: cpCode,
+          role_id: 1, // Channel Partner role
+          user_status: true
+        }
+      });
+      if (cpByCode) {
+        console.log(`✅ Found CP by user_code: ${cpCode} -> user_id: ${cpByCode.user_id}`);
+        return cpByCode;
+      }
+    }
+
+    // Strategy 2: Match CP_Name with organisation field
+    if (cpName) {
+      const cpByOrg = await req.config.users.findOne({
+        where: {
+          organisation: cpName,
+          role_id: 1,
+          user_status: true
+        }
+      });
+      if (cpByOrg) {
+        console.log(`✅ Found CP by organisation: ${cpName} -> user_id: ${cpByOrg.user_id}`);
+        return cpByOrg;
+      }
+
+      // Strategy 3: Match CP_Name with (user + user_l_name)
+      const nameParts = cpName.trim().split(/\s+/);
+      if (nameParts.length >= 1) {
+        const firstName = nameParts[0];
+        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
+
+        let nameWhere = {
+          user: firstName,
+          role_id: 1,
+          user_status: true
+        };
+
+        if (lastName) {
+          nameWhere.user_l_name = lastName;
+        }
+
+        const cpByName = await req.config.users.findOne({
+          where: nameWhere
+        });
+        if (cpByName) {
+          console.log(`✅ Found CP by name: ${cpName} -> user_id: ${cpByName.user_id}`);
+          return cpByName;
+        }
+      }
+    }
+
+    // Strategy 4: Match by email (fallback)
+    if (email) {
+      const cpByEmail = await req.config.users.findOne({
+        where: {
+          email: email,
+          role_id: 1,
+          user_status: true
+        }
+      });
+      if (cpByEmail) {
+        console.log(`✅ Found CP by email: ${email} -> user_id: ${cpByEmail.user_id}`);
+        return cpByEmail;
+      }
+    }
+
+    console.log(`⚠️ CP not found for: CP_Name=${cpName}, CP_Code=${cpCode}, Email=${email}`);
+    return null;
+  } catch (error) {
+    console.error('Error in findCPUser:', error.message);
+    return null;
+  }
+};
 
 // Upsert a lead from ERP webhook
 exports.webhookUpsertLead = async (req, res) => {
@@ -43,12 +142,26 @@ exports.webhookUpsertLead = async (req, res) => {
       zone_area: payload.zone_area || null,
       aadhar_card_number: payload.aadhar_card_number || null,
       LOI_Number: payload.LOI_Number || payload.loi_number || null,
+      erp_lead_id: payload.erp_lead_id !== undefined && payload.erp_lead_id !== null && payload.erp_lead_id !== '' ? payload.erp_lead_id : null,
+      CP_Name: payload.cp_name || payload.CP_Name || null,
+      created_by: payload.created_by || null,
+      budget_range: payload.budget_range || null,
+      size: payload.size || null,
+      type_of_bhk: payload.type_of_bhk || null,
+      lead_valid_upto: payload.lead_valid_upto || null,
       // Default values for required fields
       lead_stg_id: 1,
       lead_src_id: null,
       lead_type_id: null,
       lead_status_id: null,
     };
+
+    // Log erp_lead_id mapping for debugging
+    console.log(`[${requestId}] ERP Lead Webhook - erp_lead_id Mapping:`, {
+      payload_erp_lead_id: payload.erp_lead_id,
+      mapped_erp_lead_id: leadBody.erp_lead_id,
+      type: typeof payload.erp_lead_id
+    });
 
     // Validate FK references; if not exists in tenant, set null/defaults
     console.log(`[${requestId}] ERP Lead Webhook - Validating Foreign Keys:`, {
@@ -83,19 +196,86 @@ exports.webhookUpsertLead = async (req, res) => {
 
     console.log(`[${requestId}] ERP Lead Webhook - FK Validation Results:`, fkValidationResults);
 
-    // Try upsert by email or phone
-    const whereClause = leadBody.email_id
-      ? { email_id: leadBody.email_id }
-      : leadBody.p_contact_no
-        ? { p_contact_no: leadBody.p_contact_no }
-        : null;
+    // When CP_Name is provided, require CP code as well (code/cp_code/user_code/CP_Code)
+    const cpCodeFromPayload =
+      payload.cp_code || payload.CP_Code || payload.user_code || payload.code || null;
 
-    console.log(`[${requestId}] ERP Lead Webhook - Upsert Search:`, { whereClause });
+    if (leadBody.CP_Name && !cpCodeFromPayload) {
+      const msg =
+        "Channel Partner code is required when CP_Name is provided. Please send 'code' or 'cp_code' along with CP_Name.";
+      console.log(`[${requestId}] ERP Lead Webhook - Validation Failed: ${msg}`, {
+        CP_Name: leadBody.CP_Name,
+      });
+      return responseError(req, res, msg);
+    }
+
+    // MANDATORY: Find and link CP (Channel Partner) user if CP_Name is provided
+    // If CP_Name is provided, CP MUST exist in the system - otherwise reject the lead
+    if (leadBody.CP_Name) {
+      console.log(
+        `[${requestId}] ERP Lead Webhook - Attempting to find CP by name: ${leadBody.CP_Name} and code: ${cpCodeFromPayload}`
+      );
+      try {
+        // Try to find CP by CP_Name, CP code (if ERP sends it), or email
+        const cpUser = await findCPUser(
+          req,
+          leadBody.CP_Name,
+          cpCodeFromPayload,
+          leadBody.email_id
+        );
+
+        if (cpUser) {
+          leadBody.cp_user_id = cpUser.user_id;
+          console.log(
+            `[${requestId}] ERP Lead Webhook - ✅ Linked CP: ${leadBody.CP_Name} -> cp_user_id: ${cpUser.user_id} (user_code: ${cpUser.user_code})`
+          );
+        } else {
+          // CP_Name provided but CP not found - REJECT the lead
+          console.error(
+            `[${requestId}] ERP Lead Webhook - ❌ CP not found for: ${leadBody.CP_Name} (code: ${cpCodeFromPayload}). Lead rejected.`
+          );
+          const errorMsg = `Channel Partner not found: '${leadBody.CP_Name}'. Please ensure the CP is created and onboarded in the system before creating leads.`;
+          return responseError(req, res, errorMsg);
+        }
+      } catch (cpError) {
+        console.error(
+          `[${requestId}] ERP Lead Webhook - Error finding CP:`,
+          cpError.message
+        );
+        const errorMsg = `Error finding Channel Partner '${leadBody.CP_Name}': ${cpError.message}`;
+        return responseError(req, res, errorMsg);
+      }
+    }
+
+    // Try upsert by erp_lead_id (primary), then email or phone (fallback)
+    // Priority: 1. erp_lead_id (most reliable - ERP's unique identifier)
+    //           2. email_id (fallback)
+    //           3. p_contact_no (fallback)
+    let whereClause = null;
+    let searchMethod = null;
+    
+    if (leadBody.erp_lead_id) {
+      whereClause = { erp_lead_id: leadBody.erp_lead_id };
+      searchMethod = 'erp_lead_id';
+    } else if (leadBody.email_id) {
+      whereClause = { email_id: leadBody.email_id };
+      searchMethod = 'email_id';
+    } else if (leadBody.p_contact_no) {
+      whereClause = { p_contact_no: leadBody.p_contact_no };
+      searchMethod = 'p_contact_no';
+    }
+
+    console.log(`[${requestId}] ERP Lead Webhook - Upsert Search:`, { whereClause, searchMethod });
 
     let lead;
     if (whereClause) {
       lead = await req.config.leads.findOne({ where: whereClause, transaction: t, paranoid: false });
-      console.log(`[${requestId}] ERP Lead Webhook - Existing Lead Found:`, lead ? { lead_id: lead.lead_id, lead_code: lead.lead_code } : 'None');
+      console.log(`[${requestId}] ERP Lead Webhook - Existing Lead Found:`, lead ? { 
+        lead_id: lead.lead_id, 
+        lead_code: lead.lead_code,
+        erp_lead_id: lead.erp_lead_id,
+        found_by: searchMethod
+      } : 'None');
     }
 
     // If new, generate code
@@ -113,12 +293,35 @@ exports.webhookUpsertLead = async (req, res) => {
 
       console.log(`[${requestId}] ERP Lead Webhook - Lead Data to Create:`, leadBody);
       lead = await req.config.leads.create(leadBody, { transaction: t });
-      console.log(`[${requestId}] ERP Lead Webhook - Lead Created Successfully:`, { lead_id: lead.lead_id, lead_code: lead.lead_code });
+      console.log(`[${requestId}] ERP Lead Webhook - Lead Created Successfully:`, { 
+        lead_id: lead.lead_id, 
+        lead_code: lead.lead_code,
+        erp_lead_id: lead.erp_lead_id 
+      });
     } else {
-      console.log(`[${requestId}] ERP Lead Webhook - Updating Existing Lead:`, { lead_id: lead.lead_id });
+      console.log(`[${requestId}] ERP Lead Webhook - Updating Existing Lead:`, { 
+        lead_id: lead.lead_id,
+        current_erp_lead_id: lead.erp_lead_id 
+      });
       console.log(`[${requestId}] ERP Lead Webhook - Update Data:`, leadBody);
+      
+      // Explicitly ensure erp_lead_id is included in update
+      // Only update erp_lead_id if it's provided in payload (not null/undefined/empty)
+      if (payload.erp_lead_id !== undefined && payload.erp_lead_id !== null && payload.erp_lead_id !== '') {
+        leadBody.erp_lead_id = payload.erp_lead_id;
+        console.log(`[${requestId}] ERP Lead Webhook - Setting erp_lead_id to:`, payload.erp_lead_id);
+      }
+      
       await lead.update(leadBody, { transaction: t });
-      console.log(`[${requestId}] ERP Lead Webhook - Lead Updated Successfully`);
+      
+      // Reload lead to get updated values
+      await lead.reload({ transaction: t });
+      
+      console.log(`[${requestId}] ERP Lead Webhook - Lead Updated Successfully:`, { 
+        lead_id: lead.lead_id,
+        erp_lead_id: lead.erp_lead_id,
+        erp_lead_id_in_body: leadBody.erp_lead_id
+      });
     }
 
     await t.commit();
@@ -153,6 +356,7 @@ exports.webhookUpsertLead = async (req, res) => {
     console.log(`[${requestId}] ERP Lead Webhook - Success Response:`, { 
       lead_id: lead.lead_id, 
       lead_code: lead.lead_code,
+      erp_lead_id: lead.erp_lead_id,
       action: lead?._previousDataValues ? 'updated' : 'created'
     });
     return responseSuccess(req, res, "ERP lead processed", lead);
@@ -288,20 +492,119 @@ exports.webhookUpsertBooking = async (req, res) => {
       flat_number: payload.flat_number || null,
       block_number: payload.block_number || null,
       buyer_id: payload.buyer_id || null,
+      CP_Name: payload.CP_Name || payload.cp_name || payload.cpName || null,
+      created_by: payload.created_by || payload.createdBy || null,
+      created_at: payload.created_at || payload.createdAt || payload.created_on || null,
     };
 
     // AUTO-LINK: If erp_lead_id is provided in payload, find and link to existing lead
+    let linkedLead = null;
     if (payload.erp_lead_id && !bookingBody.lead_id) {
       console.log(`[${requestId}] ERP Booking Webhook - Attempting to find lead by erp_lead_id: ${payload.erp_lead_id}`);
-      const existingLead = await req.config.leads.findOne({ 
-        where: { erp_lead_id: payload.erp_lead_id }, 
-        transaction: t 
-      });
-      if (existingLead) {
-        bookingBody.lead_id = existingLead.lead_id;
-        console.log(`[${requestId}] ERP Booking Webhook - Found and linked lead: lead_id=${existingLead.lead_id}`);
+      try {
+        linkedLead = await req.config.leads.findOne({ 
+          where: { erp_lead_id: payload.erp_lead_id }, 
+          transaction: t 
+        });
+        if (linkedLead) {
+          bookingBody.lead_id = linkedLead.lead_id;
+          console.log(`[${requestId}] ERP Booking Webhook - Found and linked lead: lead_id=${linkedLead.lead_id}`);
+        } else {
+          console.log(`[${requestId}] ERP Booking Webhook - No lead found for erp_lead_id: ${payload.erp_lead_id}`);
+        }
+      } catch (erpLeadIdError) {
+        // If erp_lead_id column doesn't exist, fallback to email/contact lookup
+        console.log(`[${requestId}] ERP Booking Webhook - erp_lead_id lookup failed, trying fallback by email/contact:`, erpLeadIdError.message);
+        const fallbackWhere = {};
+        if (bookingBody.email) {
+          fallbackWhere.email_id = bookingBody.email;
+        } else if (bookingBody.contact_no) {
+          fallbackWhere.p_contact_no = bookingBody.contact_no;
+        }
+        
+        if (Object.keys(fallbackWhere).length > 0) {
+          linkedLead = await req.config.leads.findOne({ 
+            where: fallbackWhere, 
+            transaction: t 
+          });
+          if (linkedLead) {
+            bookingBody.lead_id = linkedLead.lead_id;
+            console.log(`[${requestId}] ERP Booking Webhook - Found and linked lead via fallback: lead_id=${linkedLead.lead_id}`);
+          } else {
+            console.log(`[${requestId}] ERP Booking Webhook - No lead found via fallback method`);
+          }
+        }
+      }
+    } else if (bookingBody.lead_id) {
+      // If lead_id is directly provided, fetch the lead to get cp_user_id
+      linkedLead = await req.config.leads.findByPk(bookingBody.lead_id, { transaction: t });
+    }
+
+    // When CP_Name is provided, require CP code as well (code/cp_code/user_code/CP_Code),
+    // unless CP is already inherited from the linked lead
+    const bookingCPName = payload.CP_Name || payload.cp_name || payload.cpName || null;
+    const bookingCpCodeFromPayload =
+      payload.cp_code || payload.CP_Code || payload.user_code || payload.code || null;
+
+    if (bookingCPName && !bookingCpCodeFromPayload && !(linkedLead && linkedLead.cp_user_id)) {
+      const msg =
+        "Channel Partner code is required when CP_Name is provided for booking. Please send 'code' or 'cp_code' along with CP_Name.";
+      console.log(
+        `[${requestId}] ERP Booking Webhook - Validation Failed (CP code missing): ${msg}`,
+        {
+          CP_Name: bookingCPName,
+        }
+      );
+      return responseError(req, res, msg);
+    }
+
+    // MANDATORY: Find and link CP (Channel Partner) user for booking
+    // Priority: 1. Inherit from linked lead's cp_user_id, 2. Find by CP_Name in booking payload
+    // If CP_Name is provided but CP not found, REJECT the booking
+    if (linkedLead && linkedLead.cp_user_id) {
+      bookingBody.cp_user_id = linkedLead.cp_user_id;
+      console.log(`[${requestId}] ERP Booking Webhook - ✅ Inherited CP from lead: cp_user_id=${linkedLead.cp_user_id}`);
+    } else {
+      // Try to find CP by CP_Name in booking payload
+      if (bookingCPName) {
+        console.log(
+          `[${requestId}] ERP Booking Webhook - Attempting to find CP by name: ${bookingCPName} and code: ${bookingCpCodeFromPayload}`
+        );
+        try {
+          // Check for: cp_code, CP_Code, user_code, or code (the field we send to ERP)
+          const cpUser = await findCPUser(
+            req,
+            bookingCPName,
+            bookingCpCodeFromPayload,
+            bookingBody.email
+          );
+          
+          if (cpUser) {
+            bookingBody.cp_user_id = cpUser.user_id;
+            console.log(
+              `[${requestId}] ERP Booking Webhook - ✅ Linked CP: ${bookingCPName} -> cp_user_id: ${cpUser.user_id} (user_code: ${cpUser.user_code})`
+            );
+          } else {
+            // CP_Name provided but CP not found - REJECT the booking
+            console.error(
+              `[${requestId}] ERP Booking Webhook - ❌ CP not found for: ${bookingCPName} (code: ${bookingCpCodeFromPayload}). Booking rejected.`
+            );
+            const errorMsg = `Channel Partner not found: '${bookingCPName}'. Please ensure the CP is created and onboarded in the system before creating bookings.`;
+            return responseError(req, res, errorMsg);
+          }
+        } catch (cpError) {
+          console.error(
+            `[${requestId}] ERP Booking Webhook - Error finding CP:`,
+            cpError.message
+          );
+          const errorMsg = `Error finding Channel Partner '${bookingCPName}': ${cpError.message}`;
+          return responseError(req, res, errorMsg);
+        }
       } else {
-        console.log(`[${requestId}] ERP Booking Webhook - No lead found for erp_lead_id: ${payload.erp_lead_id}`);
+        // No CP_Name in booking payload and no linked lead with cp_user_id
+        // Check if this is acceptable (maybe some bookings don't belong to CPs?)
+        // For now, we'll allow it but log a warning
+        console.log(`[${requestId}] ERP Booking Webhook - ⚠️ No CP_Name provided in booking payload and no CP inherited from lead. Booking will be created without cp_user_id.`);
       }
     }
 
@@ -349,12 +652,30 @@ exports.webhookUpsertBooking = async (req, res) => {
       return responseError(req, res, "Lead is required. Please provide 'erp_lead_id' or 'lead_id' in the payload.");
     }
 
-    // Upsert by sales_booking_id if present, else create new
+    // Upsert by erp_booking_id (primary) or sales_booking_id (fallback)
+    // Priority: 1. erp_booking_id (most reliable - ERP's unique identifier)
+    //           2. sales_booking_id (fallback)
     let booking;
-    if (bookingBody.sales_booking_id) {
-      console.log(`[${requestId}] ERP Booking Webhook - Searching for existing booking by sales_booking_id:`, bookingBody.sales_booking_id);
-      booking = await req.config.leadBooking.findOne({ where: { sales_booking_id: bookingBody.sales_booking_id }, transaction: t, paranoid: false });
-      console.log(`[${requestId}] ERP Booking Webhook - Existing Booking Found:`, booking ? { booking_id: booking.booking_id, sales_booking_id: booking.sales_booking_id } : 'None');
+    let whereClause = null;
+    let searchMethod = null;
+    
+    if (bookingBody.erp_booking_id) {
+      whereClause = { erp_booking_id: bookingBody.erp_booking_id };
+      searchMethod = 'erp_booking_id';
+    } else if (bookingBody.sales_booking_id) {
+      whereClause = { sales_booking_id: bookingBody.sales_booking_id };
+      searchMethod = 'sales_booking_id';
+    }
+    
+    if (whereClause) {
+      console.log(`[${requestId}] ERP Booking Webhook - Searching for existing booking by ${searchMethod}:`, whereClause);
+      booking = await req.config.leadBooking.findOne({ where: whereClause, transaction: t, paranoid: false });
+      console.log(`[${requestId}] ERP Booking Webhook - Existing Booking Found:`, booking ? { 
+        booking_id: booking.booking_id, 
+        erp_booking_id: booking.erp_booking_id,
+        sales_booking_id: booking.sales_booking_id,
+        found_by: searchMethod
+      } : 'None');
     }
 
     if (!booking) {

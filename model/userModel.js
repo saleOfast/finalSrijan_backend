@@ -313,6 +313,12 @@ module.exports = (sequelize, DataTypes) => {
                 type: DataTypes.BOOLEAN,
                 allowNull: true,
             },
+
+            erp_response_data: {
+                type: DataTypes.TEXT,
+                allowNull: true,
+                comment: "Stores ERP API response data (success/error) as JSON string",
+            },
         },
         { paranoid: true, timestamps: true }
     );

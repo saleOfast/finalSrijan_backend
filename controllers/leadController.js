@@ -30,10 +30,10 @@ exports.storeLead = async (req, res) => {
             attributes: ['company_name']
         })
         if (company) {
-            company_name = company.company_name || 'NK Realtors'
+            company_name = company.company_name || 'Srijan Bandhan'
         }
         else {
-            company_name = 'NK Realtors'
+            company_name = 'Srijan Bandhan'
         }
 
         const htmlTemplate = await req.config.emailTemplates.findOne({ where: { template_id: 15 } }) // Lead Creation Template
@@ -521,10 +521,10 @@ exports.editLead = async (req, res) => {
                 attributes: ['company_name']
             })
             if (company) {
-                company_name = company.company_name || 'NK Realtors'
+                company_name = company.company_name || 'Srijan Bandhan'
             }
             else {
-                company_name = 'NK Realtors'
+                company_name = 'Srijan Bandhan'
             }
             const htmlTemplate = await req.config.emailTemplates.findOne({ where: { template_id: 16 } }) // Lead Assigned Template
             let template = htmlTemplate.template
@@ -548,10 +548,10 @@ exports.editLead = async (req, res) => {
             attributes: ['company_name']
         })
         if (company) {
-            company_name = company.company_name || 'NK Realtors'
+            company_name = company.company_name || 'Srijan Bandhan'
         }
         else {
-            company_name = 'NK Realtors'
+            company_name = 'Srijan Bandhan'
         }
         const htmlTemplate = await req.config.emailTemplates.findOne({ where: { template_id: 17 } }) // Lead Update Template
         let template = htmlTemplate.template

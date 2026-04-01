@@ -69,11 +69,13 @@ const sendEmail = async (
         // html
     };
 
-    await transport.sendMail(mailOptions, (error, Info) => {
-        if (error) {
-            console.log(error)
-        }
-    });
-    return
+    try {
+        const info = await transport.sendMail(mailOptions);
+        console.log('Email sent successfully:', info.messageId);
+        return info;
+    } catch (error) {
+        console.error('Error sending email:', error);
+        throw error;
+    }
 };
 module.exports = sendEmail;

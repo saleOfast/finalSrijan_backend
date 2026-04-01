@@ -66,10 +66,10 @@ exports.createBrokerage = async (req, res) => {
                 attributes: ['company_name']
             })
             if (company) {
-                company_name = company.company_name || 'NK Realtors'
+                company_name = company.company_name || 'Srijan Bandhan'
             }
             else {
-                company_name = 'NK Realtors'
+                company_name = 'Srijan Bandhan'
             }
 
             const htmlTemplate = await req.config.emailTemplates.findOne({ where: { template_id: 19 } }) // Brokerage Creation Template

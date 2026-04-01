@@ -320,13 +320,13 @@ exports.db_creater = async (req, res) => {
                 .update(resetToken)
                 .digest("hex");
 
-            // const message = `Welcome to the NK Realtors. We are glad you became part of us .<br/> Click this link to reset your password : <a href="http://crm.cybermatrixsolutions.com/ChangePassword?tkn=u$34${data.password_reset_token}" target="_blank"><b> Click here </b></a>:`;
-            const message = `Welcome to the NK Realtors. We are glad you became part of us .<br/> Click this link to reset your password : <a href="${client_url}/ChangePassword?tkn=u$34${data.password_reset_token}" target="_blank"><b> Click here </b></a>:`;
+            // const message = `Welcome to the Srijan Bandhan. We are glad you became part of us .<br/> Click this link to reset your password : <a href="http://crm.cybermatrixsolutions.com/ChangePassword?tkn=u$34${data.password_reset_token}" target="_blank"><b> Click here </b></a>:`;
+            const message = `Welcome to the Srijan Bandhan. We are glad you became part of us .<br/> Click this link to reset your password : <a href="${client_url}/ChangePassword?tkn=u$34${data.password_reset_token}" target="_blank"><b> Click here </b></a>:`;
             console.log(message);
 
             let option = {
                 email: email,
-                subject: "NK Realtors",
+                subject: "Srijan Bandhan",
                 message: message,
             };
             await sendEmail(option);
@@ -890,7 +890,7 @@ exports.db_login = async (req, res) => {
         }
 
         if (!userData.user_status) {
-            return res.status(400).json({ status: 400, message: "Your account is diabled, please contact NK Realtors Team", data: null });
+            return res.status(400).json({ status: 400, message: "Your account is diabled, please contact Srijan Bandhan Team", data: null });
         }
 
         // get profile of admin

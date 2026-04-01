@@ -305,7 +305,7 @@ exports.updateStatusOfUserExpence = async(req, res) => {
 
             // sending email to the user
             let option = {
-                from: "NK Realtors <vishal.jais00@gmail.com>",
+                from: "Srijan Bandhan <vishal.jais00@gmail.com>",
                 email: repliedToUser.email,
                 subject: `Expence Application - ${body.status} `,
                 message: body.remark,
@@ -315,7 +315,7 @@ exports.updateStatusOfUserExpence = async(req, res) => {
 
         } else {
             let option = {
-                from: "NK Realtors <vishal.jais00@gmail.com>",
+                from: "Srijan Bandhan <vishal.jais00@gmail.com>",
                 email: repliedToUser.email,
                 subject: `Expence Application - ${body.status} `,
                 message: body.remark,

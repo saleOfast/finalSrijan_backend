@@ -304,7 +304,7 @@ exports.addChannelPartnerLead = async (req, res) => {
             SELECT company_name FROM ${db_name}.db_organisation_infos LIMIT 1`, {
             type: db.sequelize.QueryTypes.SELECT
         });
-        const organisationName = orgRecord?.company_name || "NK Realtors";
+        const organisationName = orgRecord?.company_name || "Srijan Bandhan";
 
         // Fetch or use default email template
         let [templateRecord] = await db.sequelize.query(`

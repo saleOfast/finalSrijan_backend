@@ -1,8 +1,131 @@
 const { Sequelize, DataTypes, QueryTypes, where, Op } = require("sequelize");
-const {responseError, responseSuccess} = require('../../helper/responce')
+const { responseError, responseSuccess } = require('../../helper/responce');
 const fileUpload = require("../../common/imageExport");
+const sendEmail = require("../../common/mailer");
 var fs = require("fs");
 const path = require("path");
+
+// Helper: send notification email to all CP and BST users when a new project is created
+const sendProjectNotificationEmails = async (req, projectData) => {
+    try {
+        // Fetch company name
+        let company_name = 'Srijan Bandhan';
+        const company = await req.config.organisationInfo.findOne({
+            attributes: ['company_name']
+        });
+        if (company) {
+            company_name = company.company_name || 'Srijan Bandhan';
+        }
+
+        // Try to load campaignCreation.html as a generic "project/campaign" template
+        let htmlTemplate = null;
+        const htmlTemplatePath = path.join(
+            __dirname,
+            "..",
+            "..",
+            "mail",
+            "cp",
+            "campaignCreation.html"
+        );
+
+        try {
+            if (fs.existsSync(htmlTemplatePath)) {
+                htmlTemplate = fs.readFileSync(htmlTemplatePath, "utf-8");
+            }
+        } catch (e) {
+            console.log("Error reading project notification template:", e.message);
+        }
+
+        // Fallback simple template if file not found
+        if (!htmlTemplate) {
+            htmlTemplate = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <style>
+                        body { font-family: Arial, sans-serif; background-color: #f6f6f6; padding: 20px; }
+                        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 20px; }
+                        .header { background-color: #2E86C1; color: #ffffff; padding: 15px; text-align: center; }
+                        .body { padding: 20px; color: #333333; }
+                        .footer { text-align: center; font-size: 12px; color: #888888; padding: 10px; border-top: 1px solid #dddddd; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>New Project Uploaded</h1>
+                        </div>
+                        <div class="body">
+                            <p>Dear {{UserName}},</p>
+                            <p>A new project has been uploaded with project name <strong>{{ProjectName}}</strong>.</p>
+                            <p>Please review the project details in your dashboard.</p>
+                            <p>Sincerely,<br>{{CompanyName}} Team</p>
+                        </div>
+                        <div class="footer">
+                            <p>© 2026 {{CompanyName}}. All rights reserved.</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `;
+        }
+
+        // Fetch all active CP users (role_id = 1) who are fully onboarded (doc_verification == 2)
+        const cpUsers = await req.config.users.findAll({
+            where: {
+                role_id: 1,
+                user_status: true,
+                deletedAt: null,
+                doc_verification: 2
+            },
+            attributes: ['user_id', 'user', 'email']
+        });
+
+        // Fetch all active BST users (role_id = 2)
+        const bstUsers = await req.config.users.findAll({
+            where: {
+                role_id: 2,
+                user_status: true,
+                deletedAt: null
+            },
+            attributes: ['user_id', 'user', 'email']
+        });
+
+        const allUsers = [...cpUsers, ...bstUsers];
+        if (allUsers.length === 0) {
+            return;
+        }
+
+        const projectName = projectData.project || projectData.project_name || 'New Project';
+
+        for (const user of allUsers) {
+            if (!user.email) continue;
+
+            try {
+                let htmlContent = htmlTemplate
+                    .replace(/{{UserName}}/g, user.user || 'User')
+                    .replace(/{{ProjectName}}/g, projectName)
+                    // for campaignCreation.html compatibility
+                    .replace(/{{CampaignName}}/g, projectName)
+                    .replace(/{{CampaignId}}/g, projectData.project_id ? String(projectData.project_id) : 'N/A')
+                    .replace(/{{CompanyName}}/g, company_name);
+
+                const emailOptions = {
+                    email: user.email,
+                    subject: "New Project Uploaded",
+                    message: htmlContent,
+                };
+
+                await sendEmail(emailOptions);
+            } catch (err) {
+                console.error(`Error sending project notification email to ${user.email}:`, err.message);
+            }
+        }
+    } catch (err) {
+        console.error("Error in sendProjectNotificationEmails:", err.message);
+    }
+};
 
 // for admin
 exports.storeChannelProject = async(req, res) => {
@@ -39,6 +162,14 @@ exports.storeChannelProject = async(req, res) => {
         console.log("body",body)
 
         projectData =  await req.config.channelProject.create(body)
+
+        // After creating the project, notify all CP and BST users (similar to campaign upload)
+        try {
+            await sendProjectNotificationEmails(req, projectData);
+        } catch (notifyErr) {
+            console.error("Project notification email error:", notifyErr.message);
+        }
+
         return await responseSuccess(req, res, "project created Succesfully", projectData )
        
     } catch (error) {

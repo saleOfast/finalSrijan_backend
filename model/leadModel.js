@@ -297,6 +297,22 @@
 			type: DataTypes.DATE,
 			allowNull: true,
 		},
+
+		erp_lead_id: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
+
+		// Link to Channel Partner (CP) user in the system
+		cp_user_id: {
+			type: DataTypes.INTEGER,
+			allowNull: true,
+			references: {
+				model: 'db_users',
+				key: 'user_id',
+			},
+			comment: 'Foreign key to db_users (Channel Partner) - auto-linked when ERP sends CP_Name',
+		},
 	},
 	{ paranoid: true, timestamps: true },   
 	);

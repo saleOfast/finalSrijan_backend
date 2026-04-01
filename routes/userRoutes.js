@@ -69,6 +69,11 @@ router
   .route("/cp/send")
   .post(userController.sendOtp)
 
+// Retry pushing CP data to ERP manually
+router
+  .route("/cp/retryErpPush")
+  .post(resolver, userController.retryPushCPToERP);
+
 router
   .route("/rolewise")
   .get(resolver, userController.getUsersByRoleID)

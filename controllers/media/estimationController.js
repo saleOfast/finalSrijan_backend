@@ -238,7 +238,7 @@ exports.sendMailForApproval = async (req, res) => {
 
             let option = {
                 email: element?.dataValues?.email || element?.email,
-                subject: "NK Realtors",
+                subject: "Srijan Bandhan",
                 message: message,
             };
 

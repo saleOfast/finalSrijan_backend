@@ -16,6 +16,7 @@ const { middle } = require("../connectionResolver/middleConnection");
 const { first_small } = require("../connectionResolver/firstConnection_small");
 const { admin } = require("./dbCreateController");
 const { log } = require("console");
+const axios = require("axios");
 require("dotenv").config();
 
 
@@ -408,10 +409,10 @@ exports.createUser = async (req, res) => {
                     attributes: ['company_name']
                 })
                 if (company) {
-                    company_name = company.company_name || 'NK Realtors'
+                    company_name = company.company_name || 'Srijan Bandhan'
                 }
                 else {
-                    company_name = 'NK Realtors'
+                    company_name = 'Srijan Bandhan'
                 }
                 let htmlContent = template.replace(/{{signupLink}}/g, signupLink).replace(/{{UsersName}}/g, `${req.body.user + (" " + req.body.user_l_name || null)}`).replace(/{{CompanyName}}/g, company_name);
                 option = {
@@ -463,10 +464,10 @@ exports.createUser = async (req, res) => {
                     attributes: ['company_name']
                 })
                 if (company) {
-                    company_name = company.company_name || 'NK Realtors'
+                    company_name = company.company_name || 'Srijan Bandhan'
                 }
                 else {
-                    company_name = 'NK Realtors'
+                    company_name = 'Srijan Bandhan'
                 }
 
                 const htmlContent = htmlTemplate
@@ -479,7 +480,7 @@ exports.createUser = async (req, res) => {
 
                 option = {
                     email: email,
-                    subject: "NK Realtors",
+                    subject: "Srijan Bandhan",
                     message: htmlContent,
                 };
 
@@ -545,10 +546,10 @@ exports.createUser = async (req, res) => {
                     attributes: ['company_name']
                 })
                 if (company) {
-                    company_name = company.company_name || 'NK Realtors'
+                    company_name = company.company_name || 'Srijan Bandhan'
                 }
                 else {
-                    company_name = 'NK Realtors'
+                    company_name = 'Srijan Bandhan'
                 }
 
                 let htmlContent = htmlTemplate.replace(/{{resetLink}}/g, resetLink).replace(/{{CompanyName}}/g, company_name).replace(/{{UsersName}}/, dbUserData.user ? dbUserData.user : "User");
@@ -1627,7 +1628,7 @@ exports.getAllUsers = async (req, res) => {
 //                 let { company_name } = await req.config.organisationInfo.findOne({
 //                     attributes: ['company_name']
 //                 })
-//                 company_name = company_name || "NK Realtors"
+//                 company_name = company_name || "Srijan Bandhan"
 
 //                 const htmlTemplate = fs.readFileSync(htmlTemplatePath, "utf-8");
 //                 let htmlContent = htmlTemplate.replace(
@@ -1642,7 +1643,7 @@ exports.getAllUsers = async (req, res) => {
 //                 );
 //                 option = {
 //                     email: userData.email,
-//                     subject: "NK Realtors",
+//                     subject: "Srijan Bandhan",
 //                     message: htmlContent,
 //                 };
 
@@ -1697,7 +1698,7 @@ exports.getAllUsers = async (req, res) => {
 //                 let { company_name } = await req.config.organisationInfo.findOne({
 //                     attributes: ['company_name']
 //                 })
-//                 company_name = company_name || "NK Realtors"
+//                 company_name = company_name || "Srijan Bandhan"
 
 //                 const htmlTemplate = fs.readFileSync(htmlTemplatePath, "utf-8");
 //                 let htmlContent = htmlTemplate
@@ -1707,7 +1708,7 @@ exports.getAllUsers = async (req, res) => {
 
 //                 option = {
 //                     email: userData.email,
-//                     subject: "NK Realtors",
+//                     subject: "Srijan Bandhan",
 //                     message: htmlContent,
 //                 };
 
@@ -1885,6 +1886,606 @@ exports.updateUser = async (req, res) => {
     }
 };
 
+// Function to push CP data to ERP
+const pushCPToERP = async (req, userDataInDB, userData) => {
+    try {
+        // Only push CP (role_id == 1) to ERP
+        if (userDataInDB.role_id !== 1) {
+            console.log(`Skipping ERP push: User is not a CP (role_id: ${userDataInDB.role_id})`);
+            return;
+        }
+
+        // Fetch state and city names - ensure they're never null
+        let stateName = "";
+        let cityName = "";
+        let countryName = "India"; // Default
+
+        if (userDataInDB.state_id) {
+            const state = await req.config.states.findByPk(userDataInDB.state_id);
+            if (state && state.state_name) {
+                stateName = String(state.state_name);
+            }
+        }
+
+        if (userDataInDB.city_id) {
+            const city = await req.config.city.findByPk(userDataInDB.city_id);
+            if (city && city.city_name) {
+                cityName = String(city.city_name);
+            }
+        }
+
+        if (userDataInDB.country_id) {
+            const country = await req.config.country.findByPk(userDataInDB.country_id);
+            if (country && country.country_name) {
+                countryName = String(country.country_name);
+            }
+        }
+
+        // Determine broker type based on organisation
+        // Farvision expects title-case values: "Company" or "Individual"
+        const brokerType = userDataInDB.organisation ? "Company" : "Individual";
+        
+        // Build name: use only CP's personal name (user + user_l_name), no fallback
+        let cpName = "";
+        if (userDataInDB.user) {
+            cpName = userDataInDB.user;
+            if (userDataInDB.user_l_name) {
+                cpName += ` ${userDataInDB.user_l_name}`;
+            }
+        }
+
+        // Build RERA details array - Hardcoded value
+        const reraDetails = [
+            {
+                reraNumber: "7372274478598",
+                registrationDate: "2025-12-18",
+                state: "West Bengal"
+            }
+        ];
+
+        // Extract mobile country code and number
+        let mobileCountryCode = "91"; // Default for India
+        let mobileNumber = userDataInDB.contact_number ? String(userDataInDB.contact_number) : "";
+
+        // Prepare ERP payload (defined outside try-catch for error logging)
+        // Ensure all fields are strings (never null) - ERP rejects null values
+        let erpPayload = {
+            code: String(userDataInDB.user_code || ""),
+            accountType: "Broker",
+            brokerType: String(brokerType || "Individual"),
+            name: String(cpName || ""),
+            addressLine1: String(userDataInDB.address || ""),
+            addressLine2: "",
+            city: String(cityName || ""),
+            state: String(stateName || ""),
+            country: String(countryName || "India"),
+            pincode: userDataInDB.pincode ? String(userDataInDB.pincode) : "700001", // Use DB pincode, fallback to hardcoded
+            mobileCountryCode: String(mobileCountryCode || "91"),
+            mobileNumber: String(mobileNumber || ""),
+            email: String(userDataInDB.email || ""),
+            ledgerSetting: 2,
+            reraDetails: Array.isArray(reraDetails) ? reraDetails.map(item => ({
+                reraNumber: String(item.reraNumber || ""),
+                registrationDate: String(item.registrationDate || ""),
+                state: String(item.state || "")
+            })) : []
+        };
+        
+        // Deep clean: Remove any null/undefined values recursively and ensure proper types
+        const cleanPayload = (obj) => {
+            if (obj === null || obj === undefined) {
+                return "";
+            }
+            if (Array.isArray(obj)) {
+                const cleaned = obj.map(item => cleanPayload(item)).filter(item => {
+                    // Keep all items, but ensure they're not null/undefined
+                    return item !== null && item !== undefined;
+                });
+                return cleaned;
+            }
+            if (typeof obj === 'object') {
+                const cleaned = {};
+                Object.keys(obj).forEach(key => {
+                    const value = obj[key];
+                    if (value === null || value === undefined) {
+                        // For string fields, use empty string; for numbers, keep as is
+                        cleaned[key] = "";
+                    } else if (Array.isArray(value)) {
+                        cleaned[key] = value.map(item => cleanPayload(item));
+                    } else if (typeof value === 'object') {
+                        cleaned[key] = cleanPayload(value);
+                    } else {
+                        // Ensure numbers stay as numbers, strings as strings
+                        cleaned[key] = value;
+                    }
+                });
+                return cleaned;
+            }
+            return obj;
+        };
+        
+        erpPayload = cleanPayload(erpPayload);
+        
+        // Final validation: Ensure no null/undefined values exist
+        const validatePayload = (obj, path = '') => {
+            if (obj === null || obj === undefined) {
+                throw new Error(`Null/undefined value found at path: ${path}`);
+            }
+            if (Array.isArray(obj)) {
+                obj.forEach((item, index) => {
+                    validatePayload(item, `${path}[${index}]`);
+                });
+            } else if (typeof obj === 'object') {
+                Object.keys(obj).forEach(key => {
+                    validatePayload(obj[key], path ? `${path}.${key}` : key);
+                });
+            }
+        };
+        
+        try {
+            validatePayload(erpPayload);
+        } catch (validationError) {
+            console.error(`❌ Payload validation failed: ${validationError.message}`);
+            throw new Error(`Payload validation failed: ${validationError.message}`);
+        }
+        
+        // Log payload for debugging BEFORE sending
+        console.log(`\n========== ERP Payload for CP ${userDataInDB.user_code} ==========`);
+        console.log(JSON.stringify(erpPayload, null, 2));
+        console.log(`========================================================\n`);
+        
+        // Ensure reraDetails is always a valid array (never null)
+        if (!Array.isArray(erpPayload.reraDetails)) {
+            erpPayload.reraDetails = [];
+        }
+        // Ensure each reraDetails item has all required fields
+        erpPayload.reraDetails = erpPayload.reraDetails.map(item => {
+            if (!item || typeof item !== 'object') {
+                return {
+                    reraNumber: "",
+                    registrationDate: "",
+                    state: ""
+                };
+            }
+            return {
+                reraNumber: String(item.reraNumber || ""),
+                registrationDate: String(item.registrationDate || ""),
+                state: String(item.state || "")
+            };
+        });
+        
+        // Also log the actual data types to ensure nothing is null
+        console.log(`Payload validation check:`, {
+            code: typeof erpPayload.code,
+            name: typeof erpPayload.name,
+            reraDetails: Array.isArray(erpPayload.reraDetails) ? `Array(${erpPayload.reraDetails.length})` : typeof erpPayload.reraDetails,
+            reraDetailsFirstItem: erpPayload.reraDetails && erpPayload.reraDetails[0] ? typeof erpPayload.reraDetails[0] : 'N/A'
+        });
+        
+        // Final JSON stringify/parse to ensure clean serialization
+        erpPayload = JSON.parse(JSON.stringify(erpPayload));
+
+        // Call ERP API
+        const erpEndpoint = process.env.ERP_CP_CREATE_ENDPOINT || "https://uat.farvisioncloud.com/CRM/odata/CreateChannelPartner";
+        const erpApiKey = process.env.ERP_CP_API_KEY || "2699eba8977265f8eb26eee3a9a34478e0eedcd4e96fe10884ca213ffb54a738";
+        
+        console.log(`Pushing CP to ERP: ${userDataInDB.user_code} (${cpName})`);
+        console.log(`ERP Endpoint: ${erpEndpoint}`);
+        
+        const response = await axios.post(erpEndpoint, erpPayload, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `APIKEY ${erpApiKey}`
+            },
+            timeout: 30000 // 30 seconds timeout
+        });
+
+        const responseData = response.data;
+        
+        // Save response data to database (store as JSON string)
+        try {
+            await userDataInDB.update({
+                erp_response_data: JSON.stringify(responseData)
+            });
+            console.log(`ERP response data saved to database for CP ${userDataInDB.user_code}`);
+        } catch (dbError) {
+            // Log but don't fail if database update fails
+            console.error(`Failed to save ERP response to database for CP ${userDataInDB.user_code}:`, dbError.message);
+        }
+        
+        // Check ERP response status
+        if (responseData.status === true) {
+            // Success response
+            const outputList = responseData.outputList || {};
+            console.log(`✅ ERP API Success for CP ${userDataInDB.user_code}:`, {
+                erpId: outputList.id,
+                ledgerId: outputList.ledgerId,
+                addressesId: outputList.addressesId,
+                communicationsId: outputList.communicationsId,
+                accountId: outputList.accountId
+            });
+
+            return { 
+                success: true, 
+                response: responseData,
+                payload: erpPayload, // Include payload for frontend debugging
+                erpIds: {
+                    id: outputList.id,
+                    ledgerId: outputList.ledgerId,
+                    addressesId: outputList.addressesId,
+                    communicationsId: outputList.communicationsId,
+                    accountId: outputList.accountId
+                }
+            };
+        } else {
+            // Error response from ERP (status === false)
+            const outputList = responseData.outputList || {};
+
+            // Normalize errorList to always be an array so .find() / .map() work safely
+            // ERP sometimes returns errorList as a JSON string, so we need to parse it
+            let rawErrorList = outputList.errorList;
+            
+            // If errorList is a string, try to parse it as JSON
+            if (typeof rawErrorList === 'string') {
+                try {
+                    const parsed = JSON.parse(rawErrorList);
+                    // If parsed successfully, check if it has nested structure
+                    if (parsed.code && parsed.errors && Array.isArray(parsed.errors)) {
+                        // ERP returns: {"code":"BadRequest","errors":[...]}
+                        rawErrorList = parsed.errors;
+                    } else if (Array.isArray(parsed)) {
+                        rawErrorList = parsed;
+                    } else {
+                        rawErrorList = [parsed];
+                    }
+                } catch (e) {
+                    // If parsing fails, treat as string error
+                    rawErrorList = [rawErrorList];
+                }
+            }
+            
+            const errorList = Array.isArray(rawErrorList)
+                ? rawErrorList
+                : rawErrorList != null
+                    ? [rawErrorList]
+                    : [];
+            
+            // Check for duplicate record error or "BadRequest" with "PROSPECT ALREADY EXISTS"
+            const duplicateError = errorList.find(err => {
+                if (!err) return false;
+                
+                // Handle string errors (might be JSON string)
+                if (typeof err === 'string') {
+                    // Check if string contains duplicate indicators
+                    if (err.includes("PROSPECT ALREADY EXISTS") || err.includes("DuplicateRecord")) {
+                        return true;
+                    }
+                    // Try to parse as JSON
+                    try {
+                        const parsed = JSON.parse(err);
+                        if (parsed.errors && Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+                            const firstError = parsed.errors[0];
+                            const errorCode = firstError.code || '';
+                            return errorCode.includes("PROSPECT ALREADY EXISTS") || 
+                                   errorCode === "DuplicateRecord";
+                        }
+                        if (parsed.code) {
+                            return parsed.code.includes("PROSPECT ALREADY EXISTS") || 
+                                   parsed.code === "DuplicateRecord";
+                        }
+                    } catch (e) {
+                        // Not JSON, check string content
+                        return err.includes("PROSPECT ALREADY EXISTS") || err.includes("DuplicateRecord");
+                    }
+                }
+                
+                // Handle object errors
+                if (typeof err === 'object' && err !== null) {
+                    const errCode = err.code || '';
+                    const errMessage = err.message || err.code || '';
+                    return errCode === "DuplicateRecord" || 
+                           (typeof errMessage === 'string' && errMessage.includes("PROSPECT ALREADY EXISTS"));
+                }
+                
+                return false;
+            });
+            
+            if (duplicateError) {
+                // Extract error details (handle both object and string formats)
+                let errorCode = "DuplicateRecord";
+                let errorMessage = "CP already exists in ERP";
+                
+                if (typeof duplicateError === 'string') {
+                    try {
+                        const parsed = JSON.parse(duplicateError);
+                        if (parsed.errors && parsed.errors[0]) {
+                            errorMessage = parsed.errors[0].code || errorMessage;
+                        }
+                    } catch (e) {
+                        errorMessage = duplicateError;
+                    }
+                } else if (typeof duplicateError === 'object' && duplicateError !== null) {
+                    errorCode = duplicateError.code || errorCode;
+                    errorMessage = duplicateError.code || duplicateError.message || errorMessage;
+                }
+                
+                console.log(`⚠️ ERP Duplicate Record for CP ${userDataInDB.user_code}:`, {
+                    code: errorCode,
+                    message: errorMessage,
+                    existingId: outputList.id,
+                    existingLedgerId: outputList.ledgerId,
+                    existingAccountId: outputList.accountId
+                });
+                
+                // Duplicate is not a critical error - CP already exists in ERP
+                return { 
+                    success: true, 
+                    isDuplicate: true,
+                    response: responseData,
+                    payload: erpPayload, // Include payload for frontend debugging
+                    erpIds: {
+                        id: outputList.id,
+                        ledgerId: outputList.ledgerId,
+                        accountId: outputList.accountId
+                    },
+                    message: `CP already exists in ERP: ${errorMessage}`
+                };
+            } else {
+                // Other errors
+                console.error(`❌ ERP API Error for CP ${userDataInDB.user_code}:`, {
+                    status: responseData.status,
+                    errors: errorList,
+                    fullResponse: responseData,
+                    partialData: {
+                        id: outputList.id,
+                        ledgerId: outputList.ledgerId,
+                        accountId: outputList.accountId
+                    }
+                });
+                
+                // Build a robust error message from errorList (handles objects or strings)
+                const errorMessages = errorList && errorList.length > 0
+                    ? errorList.map(err => {
+                        if (typeof err === "object" && err !== null) {
+                            const code = err.code || "UnknownCode";
+                            const field = err.field ? ` (${err.field})` : "";
+                            return `${code}${field}`;
+                        }
+                        return String(err);
+                    }).join(", ")
+                    : "Unknown error from ERP (empty errorList)";
+
+                // Do NOT throw here: return structured error so caller can handle,
+                // and keep the full ERP response already saved in erp_response_data.
+                return {
+                    success: false,
+                    error: errorMessages,
+                    response: responseData,
+                    payload: erpPayload // Include payload for frontend debugging
+                };
+            }
+        }
+    } catch (error) {
+        // Extract detailed error information
+        const erpErrorDetails = error.response?.data || {};
+        const erpStatus = error.response?.status;
+        
+        // Handle different error response formats from ERP
+        let erpErrors = [];
+        if (erpErrorDetails.errors) {
+            erpErrors = Array.isArray(erpErrorDetails.errors) ? erpErrorDetails.errors : [erpErrorDetails.errors];
+        } else if (erpErrorDetails.errorList) {
+            // errorList might be a string or array
+            let rawErrorList = erpErrorDetails.errorList;
+            if (typeof rawErrorList === 'string') {
+                try {
+                    const parsed = JSON.parse(rawErrorList);
+                    if (parsed.errors && Array.isArray(parsed.errors)) {
+                        erpErrors = parsed.errors;
+                    } else {
+                        erpErrors = [parsed];
+                    }
+                } catch (e) {
+                    erpErrors = [rawErrorList];
+                }
+            } else if (Array.isArray(rawErrorList)) {
+                erpErrors = rawErrorList;
+            } else {
+                erpErrors = [rawErrorList];
+            }
+        } else if (erpErrorDetails.outputList?.errorList) {
+            // Handle nested errorList in outputList
+            let rawErrorList = erpErrorDetails.outputList.errorList;
+            if (typeof rawErrorList === 'string') {
+                try {
+                    const parsed = JSON.parse(rawErrorList);
+                    if (parsed.errors && Array.isArray(parsed.errors)) {
+                        erpErrors = parsed.errors;
+                    } else {
+                        erpErrors = [parsed];
+                    }
+                } catch (e) {
+                    erpErrors = [rawErrorList];
+                }
+            } else if (Array.isArray(rawErrorList)) {
+                erpErrors = rawErrorList;
+            } else {
+                erpErrors = [rawErrorList];
+            }
+        }
+        
+        // Log detailed error information
+        const errorLog = {
+            message: error.message,
+            httpStatus: erpStatus,
+            erpErrorDetails: JSON.stringify(erpErrorDetails, null, 2),
+            erpErrors: erpErrors,
+            erpErrorsStringified: JSON.stringify(erpErrors, null, 2)
+        };
+        
+        // Include payload if available (might not be accessible if error occurred before payload creation)
+        if (typeof erpPayload !== 'undefined') {
+            errorLog.payloadSent = JSON.stringify(erpPayload, null, 2);
+        }
+        
+        console.error(`Error pushing CP ${userDataInDB?.user_code} to ERP:`, errorLog);
+        
+        // Check if this is a duplicate error even in HTTP 500 response
+        const isDuplicateError = erpErrors.some(err => {
+            const errStr = typeof err === 'string' ? err : JSON.stringify(err);
+            return errStr.includes("PROSPECT ALREADY EXISTS") || 
+                   errStr.includes("DuplicateRecord") ||
+                   errStr.includes("already exists");
+        });
+        
+        // Save error response to database if available
+        if (userDataInDB && error.response?.data) {
+            try {
+                await userDataInDB.update({
+                    erp_response_data: JSON.stringify({
+                        status: false,
+                        error: error.message,
+                        response: error.response.data,
+                        httpStatus: error.response.status,
+                        ...(typeof erpPayload !== 'undefined' && { payloadSent: erpPayload })
+                    })
+                });
+                console.log(`ERP error response data saved to database for CP ${userDataInDB.user_code}`);
+            } catch (dbError) {
+                console.error(`Failed to save ERP error response to database:`, dbError.message);
+            }
+        } else if (userDataInDB && error.message) {
+            // Save error message even if no response data
+            try {
+                await userDataInDB.update({
+                    erp_response_data: JSON.stringify({
+                        status: false,
+                        error: error.message,
+                        timestamp: new Date().toISOString(),
+                        ...(typeof erpPayload !== 'undefined' && { payloadSent: erpPayload })
+                    })
+                });
+            } catch (dbError) {
+                console.error(`Failed to save ERP error to database:`, dbError.message);
+            }
+        }
+        
+        logErrorToFile(error);
+        
+        // Build better error message
+        let errorMessage = error.message;
+        if (erpStatus === 500) {
+            errorMessage = `ERP server error (500): ${error.message}`;
+            if (erpErrors.length > 0) {
+                const errorTexts = erpErrors.map(err => {
+                    if (typeof err === 'object' && err !== null) {
+                        return err.code || err.message || JSON.stringify(err);
+                    }
+                    // If it's a string, try to extract meaningful info
+                    if (typeof err === 'string') {
+                        try {
+                            const parsed = JSON.parse(err);
+                            if (parsed.errors && parsed.errors[0]) {
+                                return parsed.errors[0].code || parsed.errors[0].message || err;
+                            }
+                            return parsed.code || err;
+                        } catch (e) {
+                            return err;
+                        }
+                    }
+                    return String(err);
+                });
+                errorMessage += ` - ${errorTexts.join(', ')}`;
+            }
+        } else if (erpErrors.length > 0) {
+            // For non-500 errors, extract error messages
+            const errorTexts = erpErrors.map(err => {
+                if (typeof err === 'object' && err !== null) {
+                    return err.code || err.message || JSON.stringify(err);
+                }
+                if (typeof err === 'string') {
+                    try {
+                        const parsed = JSON.parse(err);
+                        if (parsed.errors && parsed.errors[0]) {
+                            return parsed.errors[0].code || parsed.errors[0].message || err;
+                        }
+                        return parsed.code || err;
+                    } catch (e) {
+                        return err;
+                    }
+                }
+                return String(err);
+            });
+            errorMessage = errorTexts.join(', ');
+        }
+        
+        // If it's a duplicate error, treat it as success (CP already exists)
+        if (isDuplicateError) {
+            console.log(`⚠️ ERP Duplicate Record detected in HTTP ${erpStatus} response for CP ${userDataInDB?.user_code}`);
+            return {
+                success: true,
+                isDuplicate: true,
+                error: errorMessage,
+                response: erpErrorDetails,
+                ...(typeof erpPayload !== 'undefined' && { payload: erpPayload }) // Include payload if available
+            };
+        }
+        
+        return { 
+            success: false, 
+            error: errorMessage,
+            ...(typeof erpPayload !== 'undefined' && { payload: erpPayload }) // Include payload if available
+        };
+    }
+};
+
+// API to retry pushing CP data to ERP manually
+exports.retryPushCPToERP = async (req, res) => {
+    try {
+        const { user_code, user_id } = req.body;
+
+        if (!user_code && !user_id) {
+            return await responseError(req, res, "user_code or user_id is required to retry ERP push");
+        }
+
+        // Find CP user in tenant DB
+        const whereClause = {};
+        if (user_code) whereClause.user_code = user_code;
+        if (user_id) whereClause.user_id = user_id;
+
+        const userDataInDB = await req.config.users.findOne({ where: whereClause });
+
+        if (!userDataInDB) {
+            return await responseError(req, res, "Channel Partner not found");
+        }
+
+        if (userDataInDB.role_id !== 1) {
+            return await responseError(req, res, "Selected user is not a Channel Partner");
+        }
+
+        // Call common ERP push function
+        const result = await pushCPToERP(req, userDataInDB, null);
+
+        if (!result || result.success === false) {
+            const message = result && result.error
+                ? `Failed to push CP to ERP: ${result.error}`
+                : "Failed to push CP to ERP";
+            return await responseError(req, res, message, result || null);
+        }
+
+        let message = "CP data pushed to ERP successfully";
+        if (result.isDuplicate) {
+            message = "CP already exists in ERP (duplicate record). Latest ERP response stored in database.";
+        }
+
+        return await responseSuccess(req, res, message, result);
+    } catch (error) {
+        logErrorToFile(error);
+        console.error("Error in retryPushCPToERP:", error);
+        return await responseError(req, res, "Something Went Wrong", error.message || error);
+    }
+};
+
 // Function to handle accept onboarding user process
 const handleAcceptProcess = async (req, userData, dbUserData) => {
     let message;
@@ -1945,6 +2546,20 @@ const handleAcceptProcess = async (req, userData, dbUserData) => {
                     { where: { user_code: dbUserData.user_code } }
                 );
                 console.log(`Ownership transferred: CP ${userData.user_id} now reports to BST ${userExistInCPLeads.asssigned_to}`);
+            }
+        }
+
+        // Push CP data to ERP when doc_verification == 2 for CP users (role_id == 1)
+        // Use tenant user role (data.role_id) instead of admin client role to avoid mismatches
+        if (data && data.role_id == 1) {
+            // Reload userDataInDB to get latest data including onboarding_date and verification status
+            await data.reload();
+
+            if (data.doc_verification == 2) {
+                // Push to ERP (non-blocking - errors are logged but don't fail onboarding)
+                pushCPToERP(req, data, userData).catch(err => {
+                    console.error(`Failed to push CP ${data.user_code} to ERP:`, err.message);
+                });
             }
         }
     }
@@ -2052,10 +2667,10 @@ const sendResetPasswordEmail = async (req, userData, userAssign) => {
         attributes: ['company_name']
     })
     if (company) {
-        company_name = company.company_name || 'NK Realtors'
+        company_name = company.company_name || 'Srijan Bandhan'
     }
     else {
-        company_name = 'NK Realtors'
+        company_name = 'Srijan Bandhan'
     }
 
     let BdData = {
@@ -2081,7 +2696,7 @@ const sendResetPasswordEmail = async (req, userData, userAssign) => {
 
     const options = {
         email: userData.email,
-        subject: "NK Realtors",
+        subject: "Srijan Bandhan",
         message: htmlContent,
     };
 
@@ -2097,10 +2712,10 @@ const sendRejectionEmail = async (req, userData, dbUserData) => {
         attributes: ['company_name']
     })
     if (company) {
-        company_name = company.company_name || 'NK Realtors'
+        company_name = company.company_name || 'Srijan Bandhan'
     }
     else {
-        company_name = 'NK Realtors'
+        company_name = 'Srijan Bandhan'
     }
 
     let htmlContent = htmlTemplate
@@ -2110,7 +2725,7 @@ const sendRejectionEmail = async (req, userData, dbUserData) => {
 
     const options = {
         email: userData.email,
-        subject: "NK Realtors",
+        subject: "Srijan Bandhan",
         message: htmlContent,
     };
 
@@ -2229,16 +2844,16 @@ exports.sendOtp = async (req, res) => {
             SELECT company_name FROM ${req.body.db_name || 'MULTI_USER39234554'}.db_organisation_infos LIMIT 1`, {
             type: db.sequelize.QueryTypes.SELECT
         });
-        const organisationName = orgRecord?.company_name || "NK Realtors";
+        const organisationName = orgRecord?.company_name || "Srijan Bandhan";
 
 
         let company_name
         let company = organisationName
         if (company) {
-            company_name = organisationName || 'NK Realtors'
+            company_name = organisationName || 'Srijan Bandhan'
         }
         else {
-            company_name = 'NK Realtors'
+            company_name = 'Srijan Bandhan'
         }
 
         // Fetch or use default email template
@@ -2489,10 +3104,10 @@ exports.forgotpassword = async (req, res) => {
         // let { company_name } = await req.config.organisationInfo.findOne({
         //     attributes: ['company_name']
         // })
-        // company_name = company_name || 'NK Realtors'
+        // company_name = company_name || 'Srijan Bandhan'
 
         let htmlContent = template.replace(/{{resetLink}}/g, resetLink);
-        htmlContent = htmlContent.replace(/{{UsersName}}/, user.user).replace(/{{CompanyName}}/g, 'NK Realtors');
+        htmlContent = htmlContent.replace(/{{UsersName}}/, user.user).replace(/{{CompanyName}}/g, 'Srijan Bandhan');
 
         let option = {
             email: email,
@@ -2755,11 +3370,85 @@ exports.registrationTokenVerification = async (req, res) => {
                 .json({ status: 400, message: "No  data found of channel partner" });
         }
 
+        // Fetch CP lead data to auto-populate city and state
+        let city_id = null;
+        let state_id = null;
+        let city_name = null;
+        let state_name = null;
+
+        try {
+            // Find CP lead by email or contact number using raw SQL query
+            const cpLeads = await ud.sequelize.query(`
+                SELECT city_id, state_id, city, state 
+                FROM db_channel_partner_leads 
+                WHERE (email = :email OR contact = :contact)
+                LIMIT 1
+            `, {
+                replacements: { 
+                    email: user.email || '', 
+                    contact: user.contact_number || null 
+                },
+                type: QueryTypes.SELECT
+            });
+
+            if (cpLeads && cpLeads.length > 0) {
+                const cpLead = cpLeads[0];
+                city_id = cpLead.city_id;
+                state_id = cpLead.state_id;
+                city_name = cpLead.city;
+                state_name = cpLead.state;
+
+                // If city_id/state_id exist but names don't, fetch them from database
+                if (city_id && !city_name) {
+                    const cityData = await ud.sequelize.query(`
+                        SELECT city_name 
+                        FROM db_city 
+                        WHERE city_id = :city_id 
+                        LIMIT 1
+                    `, {
+                        replacements: { city_id: city_id },
+                        type: QueryTypes.SELECT
+                    });
+                    if (cityData && cityData.length > 0) {
+                        city_name = cityData[0].city_name;
+                    }
+                }
+
+                if (state_id && !state_name) {
+                    const stateData = await ud.sequelize.query(`
+                        SELECT state_name 
+                        FROM db_states 
+                        WHERE state_id = :state_id 
+                        LIMIT 1
+                    `, {
+                        replacements: { state_id: state_id },
+                        type: QueryTypes.SELECT
+                    });
+                    if (stateData && stateData.length > 0) {
+                        state_name = stateData[0].state_name;
+                    }
+                }
+            }
+        } catch (leadError) {
+            // Don't fail if CP lead lookup fails, just log it
+            console.log('Error fetching CP lead data for auto-population:', leadError);
+        }
+
+        // Prepare response data with user info and auto-populated city/state
+        const responseData = {
+            ...user.dataValues,
+            autoPopulatedCityId: city_id,
+            autoPopulatedStateId: state_id,
+            autoPopulatedCity: city_name,
+            autoPopulatedState: state_name
+        };
+
         // return res.send(user);
         await ud.sequelize.close();
         return res
             .status(200)
-            .json({ status: 200, message: "User token verified.", data: user });
+            .json({ status: 200, message: "User token verified.", data: responseData });
+            console.log('User token verified.', responseData);
     } catch (error) {
         logErrorToFile(error)
         return res
@@ -2897,12 +3586,12 @@ exports.cpCompleteRegistration = async (req, res) => {
 
             if (supervisorUsers && supervisorUsers.length > 0) {
                 // Get company name
-                let company_name = 'NK Realtors';
+                let company_name = 'Srijan Bandhan';
                 const company = await ud.organisationInfo.findOne({
                     attributes: ['company_name']
                 });
                 if (company) {
-                    company_name = company.company_name || 'NK Realtors';
+                    company_name = company.company_name || 'Srijan Bandhan';
                 }
 
                 // Get email template (use template_id 9 for CP lead notification, or create a new one)
@@ -3334,10 +4023,10 @@ exports.resendEmailToPendingUser = async (req, res) => {
                 attributes: ['company_name']
             })
             if (company) {
-                company_name = company.company_name || 'NK Realtors'
+                company_name = company.company_name || 'Srijan Bandhan'
             }
             else {
-                company_name = 'NK Realtors'
+                company_name = 'Srijan Bandhan'
             }
             const htmlContent = template
                 .replace(/{{signupLink}}/g, signupLink)
@@ -3348,7 +4037,7 @@ exports.resendEmailToPendingUser = async (req, res) => {
             // const htmlContent = template.replace(/{{signupLink}}/g, signupLink).replace(/{{CompanyName}}/g, company_name);
             option = {
                 email: dbUserData.email,
-                subject: "NK Realtors",
+                subject: "Srijan Bandhan",
                 message: htmlContent,
             };
 
@@ -3378,17 +4067,17 @@ exports.resendEmailToPendingUser = async (req, res) => {
                 attributes: ['company_name']
             })
             if (company) {
-                company_name = company.company_name || 'NK Realtors'
+                company_name = company.company_name || 'Srijan Bandhan'
             }
             else {
-                company_name = 'NK Realtors'
+                company_name = 'Srijan Bandhan'
             }
 
             let htmlContent = template.replace(/{{resetLink}}/g, resetLink);
             htmlContent = htmlContent.replace(/{{UsersName}}/, dbUserData.user ? dbUserData.user : "User").replace(/{{CompanyName}}/g, company_name);
             option = {
                 email: dbUserData.email,
-                subject: "NK Realtors",
+                subject: "Srijan Bandhan",
                 message: htmlContent,
             };
         }
@@ -3810,10 +4499,10 @@ exports.sendMailToReportTos = async (req) => {
                 attributes: ['company_name']
             })
             if (company) {
-                company_name = company.company_name || 'NK Realtors'
+                company_name = company.company_name || 'Srijan Bandhan'
             }
             else {
-                company_name = 'NK Realtors'
+                company_name = 'Srijan Bandhan'
             }
 
             let htmlContent = htmlTemplate.replace("{{user}}", request.user ? request.user : request?.dataValues?.user);
@@ -3822,7 +4511,7 @@ exports.sendMailToReportTos = async (req) => {
 
             let option = {
                 email: adminEmail,
-                subject: "NK Realtors",
+                subject: "Srijan Bandhan",
                 message: htmlContent,
             };
             await sendEmail(option);
@@ -3839,7 +4528,7 @@ exports.sendMailToReportTos = async (req) => {
                 else {
                     let option = {
                         email: reportTo.email,
-                        subject: "NK Realtors",
+                        subject: "Srijan Bandhan",
                         message: htmlContent,
                     };
                     await sendEmail(option);

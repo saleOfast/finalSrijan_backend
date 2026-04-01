@@ -396,7 +396,7 @@ exports.updateStatusOfLeaveApps = async (req, res) => {
   
       // Send email to the user
       const option = {
-        from: "NK Realtors <vishal.jais00@gmail.com>",
+        from: "Srijan Bandhan <vishal.jais00@gmail.com>",
         email: repliedToUser.email,
         subject: `Leave Application - ${leave_app_status} `,
         message,

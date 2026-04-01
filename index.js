@@ -98,7 +98,7 @@ app.use(cors({ origin: '*' }));
 // app.use(cors({
 //   origin: ['*'] }));
 // const corsOptions = {
-//   origin: 'http://crm.NK Realtors.com:8050', // Your frontend origin
+//   origin: 'http://crm.Srijan Bandhan.com:8050', // Your frontend origin
 //   methods: ['GET', 'POST', 'PUT', 'DELETE'],
 //   allowedHeaders: ['Content-Type', 'Authorization'],
 //   credentials: true

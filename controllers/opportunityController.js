@@ -37,7 +37,7 @@ exports.storeOpportunity = async (req, res) => {
             attributes: ['company_name']
         })
         console.log('orgInfo', orgInfo)
-        let company_name = orgInfo?.company_name || 'NK Realtors'
+        let company_name = orgInfo?.company_name || 'Srijan Bandhan'
         console.log('company_name', company_name)
 
         const OwnerDetail = await req.config.users.findByPk(req.user.user_id);

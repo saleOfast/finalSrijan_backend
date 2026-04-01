@@ -224,6 +224,14 @@ exports.getleads = async (req, res) => {
         if (req.query.status_id) {
             whereClause.lead_stg_id = req.query.status_id
         }
+        // Filter by ERP lead ID (to get leads from ERP)
+        if (req.query.erp_lead_id) {
+            whereClause.erp_lead_id = decodeURIComponent(req.query.erp_lead_id);
+        }
+        // Filter to get all ERP leads (where erp_lead_id is not null)
+        if (req.query.from_erp === 'true' || req.query.from_erp === true) {
+            whereClause.erp_lead_id = { [Op.ne]: null };
+        }
         if (req.query.f_date) {
             let startDate = new Date(req.query.f_date); // Start Date (00:00:00)
             let endDate = new Date(req.query.t_date);   // End Date (00:00:00 by default)
@@ -386,6 +394,7 @@ exports.getleads = async (req, res) => {
             }
 
         } else {
+            // Fetch single lead by ID
             leadData = await req.config.leads.findByPk(req.query.lead_id, {
                 include: [
                     {
@@ -408,10 +417,19 @@ exports.getleads = async (req, res) => {
                             exclude: ["createdAt", "updatedAt", "deletedAt"],
                         },
                     },
-
-
                 ]
-            })
+            });
+
+            // Safely add project_name to the response object for single-lead fetch
+            if (leadData) {
+                const leadJson = leadData.toJSON ? leadData.toJSON() : leadData;
+                leadJson.project_name =
+                    leadJson.sales_project_name ||
+                    (leadJson.projectData && leadJson.projectData.project) ||
+                    null;
+
+                return await responseSuccess(req, res, "leadList list", leadJson);
+            }
         }
 
         return await responseSuccess(req, res, "leadList list", leadData)
@@ -883,10 +901,10 @@ exports.sendMailToLeadOwners = async (req) => {
                 attributes: ['company_name']
             })
             if (company) {
-                company_name = company.company_name || 'NK Realtors'
+                company_name = company.company_name || 'Srijan Bandhan'
             }
             else {
-                company_name = 'NK Realtors'
+                company_name = 'Srijan Bandhan'
             }
 
             let htmlContent = htmlTemplate.replace("{{Name}}", lead.lead_name);
@@ -899,7 +917,7 @@ exports.sendMailToLeadOwners = async (req) => {
             }
             let option = {
                 email: leadOwner.email,
-                subject: "NK Realtors",
+                subject: "Srijan Bandhan",
                 message: htmlContent,
             };
             await sendEmail(option);

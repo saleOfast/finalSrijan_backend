@@ -58,10 +58,10 @@ exports.storeContact = async (req, res) => {
                 attributes: ['company_name']
             })
             if (company) {
-                company_name = company.company_name || 'NK Realtors'
+                company_name = company.company_name || 'Srijan Bandhan'
             }
             else {
-                company_name = 'NK Realtors'
+                company_name = 'Srijan Bandhan'
             }
 
             template = template.replace(/{{UserName}}/g, OwnerDetail.user).replace(/{{ContactName}}/g, contactBody.first_name + contactBody.last_name ? contactBody.last_name : null).replace(/{{AccountName}}/g, accuntData.acc_name).replace(/{{CompanyName}}/g, company_name);
@@ -355,10 +355,10 @@ exports.editContact = async (req, res) => {
             attributes: ['company_name']
         })
         if (company) {
-            company_name = company.company_name || 'NK Realtors'
+            company_name = company.company_name || 'Srijan Bandhan'
         }
         else {
-            company_name = 'NK Realtors'
+            company_name = 'Srijan Bandhan'
         }
         template = template.replace(/{{UserName}}/g, OwnerDetail.user).replace(/{{ContactName}}/g, contactBody.first_name + contactBody.last_name ? contactBody.last_name : null).replace(/{{AccountName}}/g, accuntData.acc_name).replace(/{{CompanyName}}/g, company_name);;
 

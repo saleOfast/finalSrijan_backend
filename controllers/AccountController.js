@@ -114,10 +114,10 @@ exports.storeAccount = async (req, res) => {
             attributes: ['company_name']
         })
         if (company) {
-            company_name = company.company_name || 'NK Realtors'
+            company_name = company.company_name || 'Srijan Bandhan'
         }
         else {
-            company_name = 'NK Realtors'
+            company_name = 'Srijan Bandhan'
         }
         const htmlContent = template.replace(/{{UserName}}/g, accountOwnerDetail.user).replace(/{{AccountName}}/g, accountBody.acc_name).replace(/{{AccountId}}/g, accountBody.acc_code).replace(/{{CompanyName}}/g, company_name);
 
@@ -666,10 +666,10 @@ exports.editAccount = async (req, res) => {
             attributes: ['company_name']
         })
         if (company) {
-            company_name = company.company_name || 'NK Realtors'
+            company_name = company.company_name || 'Srijan Bandhan'
         }
         else {
-            company_name = 'NK Realtors'
+            company_name = 'Srijan Bandhan'
         }
         template = template.replace(/{{UserName}}/g, accountOwnerDetail.user).replace(/{{AccountName}}/g, accountBody.acc_name).replace(/{{AccountId}}/g, accountBody.acc_code).replace(/{{CompanyName}}/g, company_name);
 

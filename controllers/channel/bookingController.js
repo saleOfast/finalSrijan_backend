@@ -22,28 +22,29 @@ function getCurrentWeekEndDate() {
 }
 
 async function updateBookingStatuses(req, bookingData, currentDateTime) {
+    // COMMENTED OUT: Auto status change to 'VISIT DONE NOT BOOKED' after 90 days
     // Filter booking records that are eligible for update
-    const bookingIdsToUpdate = bookingData
-        .filter(d => {
-            const bookingDateTime = moment(`${d.BookingleadData.p_visit_date} ${d.BookingleadData.p_visit_time}`);
-            const daysSinceVisit = currentDateTime.diff(bookingDateTime, 'days');
-            return daysSinceVisit > 90 && d.status === 'Eligible for brokerage bill';
-        })
-        .map(d => d.booking_id);
+    // const bookingIdsToUpdate = bookingData
+    //     .filter(d => {
+    //         const bookingDateTime = moment(`${d.BookingleadData.p_visit_date} ${d.BookingleadData.p_visit_time}`);
+    //         const daysSinceVisit = currentDateTime.diff(bookingDateTime, 'days');
+    //         return daysSinceVisit > 90 && d.status === 'Eligible for brokerage bill';
+    //     })
+    //     .map(d => d.booking_id);
 
-    if (bookingIdsToUpdate.length > 0) {
-        try {
-            // Perform the bulk update
-            await req.config.leadBooking.update(
-                { status: 'VISIT DONE NOT BOOKED' },
-                { where: { booking_id: { [Op.in]: bookingIdsToUpdate } } }
-            );
-        } catch (error) {
-            console.error('Error updating booking statuses:', error);
-        }
-    } else {
-        console.log('No bookings to update.');
-    }
+    // if (bookingIdsToUpdate.length > 0) {
+    //     try {
+    //         // Perform the bulk update
+    //         await req.config.leadBooking.update(
+    //             { status: 'VISIT DONE NOT BOOKED' },
+    //             { where: { booking_id: { [Op.in]: bookingIdsToUpdate } } }
+    //         );
+    //     } catch (error) {
+    //         console.error('Error updating booking statuses:', error);
+    //     }
+    // } else {
+    //     console.log('No bookings to update.');
+    // }
 }
 
 exports.getleadBooking = async (req, res) => {
@@ -56,6 +57,16 @@ exports.getleadBooking = async (req, res) => {
         }
         if (req.query.status_id) {
             whereClause.status = decodeURIComponent(req.query.status_id)
+        }
+
+        // Filter by ERP booking ID (to get a specific booking pushed from ERP)
+        if (req.query.erp_booking_id) {
+            whereClause.erp_booking_id = decodeURIComponent(req.query.erp_booking_id);
+        }
+
+        // Filter to get all bookings that came from ERP (where erp_booking_id is not null)
+        if (req.query.from_erp === 'true' || req.query.from_erp === true) {
+            whereClause.erp_booking_id = { [Op.ne]: null };
         }
         if (req.query.f_date) {
             let startDate = new Date(req.query.f_date); // Start Date (00:00:00)

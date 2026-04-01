@@ -91,6 +91,13 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: true
             },
 
+            // ERP booking identifier used for status sync from ERP
+            erp_booking_id: {
+                type: DataTypes.STRING,
+                allowNull: true,
+                comment: 'ERP booking ID used by webhookUpdateBookingStatus',
+            },
+
             sales_booking_id: {
                 type: DataTypes.STRING,
                 allowNull: true,
@@ -136,6 +143,17 @@ module.exports = (sequelize, DataTypes) => {
             created_at: {
                 type: DataTypes.DATE,
                 allowNull: true,
+            },
+
+            // Link to Channel Partner (CP) user in the system
+            cp_user_id: {
+                type: DataTypes.INTEGER,
+                allowNull: true,
+                references: {
+                    model: 'db_users',
+                    key: 'user_id',
+                },
+                comment: 'Foreign key to db_users (Channel Partner) - auto-linked from lead or by CP_Name matching',
             },
         },
         { paranoid: true, timestamps: true },
