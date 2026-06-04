@@ -407,10 +407,212 @@ const getBstAssignedCpLeadsView = async (sequelize, user) => {
   };
 };
 
+const CP_LEAD_STAGES = [
+  "OPEN",
+  "CONTACTED",
+  "LINK SENT",
+  "ONBOARDED",
+  "NOT INTERESTED",
+  "CALL",
+  "VISIT",
+  "FOLLOW UP",
+];
+
+const normalizeCpLeadStage = (raw) => {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const value = String(raw).trim().toUpperCase();
+  const match = CP_LEAD_STAGES.find((s) => s.toUpperCase() === value);
+  return match || null;
+};
+
+const findCpLeadByUserContact = async (sequelize, user) => {
+  const rows = await sequelize.query(
+    `
+      SELECT cpl_id, stage, remarks, follow_up_date, asssigned_to
+      FROM db_channel_partner_leads
+      WHERE deletedAt IS NULL
+        AND (
+          (:email <> '' AND email = :email)
+          OR (
+            :contact IS NOT NULL
+            AND contact IS NOT NULL
+            AND RIGHT(CAST(contact AS CHAR), 10) = RIGHT(CAST(:contact AS CHAR), 10)
+          )
+        )
+      ORDER BY cpl_id DESC
+      LIMIT 1
+    `,
+    {
+      replacements: {
+        email: user.email || "",
+        contact: user.contact_number ?? null,
+      },
+      type: QueryTypes.SELECT,
+    }
+  );
+  return rows[0] || null;
+};
+
+const mapCpLeadSummary = (lead) => {
+  if (!lead) {
+    return {
+      cpl_id: null,
+      stage: null,
+      remarks: null,
+      follow_up_date: null,
+      asssigned_to: null,
+    };
+  }
+  return {
+    cpl_id: Number(lead.cpl_id),
+    stage: lead.stage || null,
+    remarks: lead.remarks ?? null,
+    follow_up_date: lead.follow_up_date ?? null,
+    asssigned_to: lead.asssigned_to != null ? Number(lead.asssigned_to) : null,
+  };
+};
+
+const getCpLeadStageForChannelPartnerUser = async (config, user) => {
+  const lead = await findCpLeadByUserContact(config.sequelize, user);
+  return mapCpLeadSummary(lead);
+};
+
+const assertBstCanManageChannelPartner = async (config, bstUserId, cpUser) => {
+  if (Number(cpUser.role_id) !== 1) {
+    return { ok: false, message: "BST can only update Channel Partner users" };
+  }
+
+  if (Number(cpUser.report_to) === Number(bstUserId)) {
+    return { ok: true };
+  }
+
+  const lead = await findCpLeadByUserContact(config.sequelize, cpUser);
+  if (lead && Number(lead.asssigned_to) === Number(bstUserId)) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    message: "You are not authorised to update this Channel Partner. CP must report to you or be assigned to you.",
+  };
+};
+
+const updateCpLeadFieldsForChannelPartnerUser = async (config, user, fields = {}) => {
+  const lead = await findCpLeadByUserContact(config.sequelize, user);
+  if (!lead) {
+    return { ok: false, message: "No CP lead found for this channel partner (email/contact)" };
+  }
+
+  const hasStage = fields.stage !== undefined && fields.stage !== null && String(fields.stage).trim() !== "";
+  const hasRemarks = fields.remarks !== undefined;
+  const hasFollowUp = fields.follow_up_date !== undefined;
+
+  if (!hasStage && !hasRemarks && !hasFollowUp) {
+    return { ok: false, message: "Provide stage, remarks, and/or follow_up_date to update" };
+  }
+
+  let normalizedStage = lead.stage || null;
+  if (hasStage) {
+    normalizedStage = normalizeCpLeadStage(fields.stage);
+    if (!normalizedStage) {
+      return {
+        ok: false,
+        message: `Invalid stage. Allowed values: ${CP_LEAD_STAGES.join(", ")}`,
+      };
+    }
+  }
+
+  const remarksValue = hasRemarks
+    ? (fields.remarks === null || fields.remarks === "" ? null : String(fields.remarks))
+    : lead.remarks ?? null;
+
+  const followUpValue = hasFollowUp
+    ? (fields.follow_up_date || null)
+    : lead.follow_up_date ?? null;
+
+  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const setParts = ["updatedAt = :now"];
+  const replacements = { now, cpl_id: lead.cpl_id };
+
+  if (hasStage) {
+    setParts.push("stage = :stage");
+    replacements.stage = normalizedStage;
+  }
+  if (hasRemarks) {
+    setParts.push("remarks = :remarks");
+    replacements.remarks = remarksValue;
+  }
+  if (hasFollowUp) {
+    setParts.push("follow_up_date = :follow_up_date");
+    replacements.follow_up_date = followUpValue;
+  }
+
+  await config.sequelize.query(
+    `
+      UPDATE db_channel_partner_leads
+      SET ${setParts.join(", ")}
+      WHERE cpl_id = :cpl_id AND deletedAt IS NULL
+    `,
+    {
+      replacements,
+      type: QueryTypes.UPDATE,
+    }
+  );
+
+  const detailsModel = config.cplDetails || config.channelPartnerLeadsDetails;
+  if (detailsModel && (hasStage || hasRemarks || hasFollowUp)) {
+    await detailsModel.create({
+      cpl_id: lead.cpl_id,
+      stage: normalizedStage,
+      follow_up_date: followUpValue,
+      remarks: remarksValue,
+      status: true,
+      createdAt: now,
+      updatedAt: now,
+    }).catch(() => {});
+  }
+
+  return {
+    ok: true,
+    ...mapCpLeadSummary({
+      cpl_id: lead.cpl_id,
+      stage: normalizedStage,
+      remarks: remarksValue,
+      follow_up_date: followUpValue,
+      asssigned_to: lead.asssigned_to,
+    }),
+  };
+};
+
+const updateCpLeadStageForChannelPartnerUser = async (config, user, stage, remarks = null) =>
+  updateCpLeadFieldsForChannelPartnerUser(config, user, { stage, remarks });
+
+const attachCpLeadStageToUserPayload = async (config, userRecord, payload = {}) => {
+  const plain = userRecord?.toJSON ? userRecord.toJSON() : { ...userRecord };
+  const stageInfo = await getCpLeadStageForChannelPartnerUser(config, {
+    email: plain.email,
+    contact_number: plain.contact_number,
+  });
+  return {
+    ...plain,
+    ...payload,
+    cpl_id: stageInfo.cpl_id,
+    stage: stageInfo.stage,
+    lead_remarks: stageInfo.remarks,
+    follow_up_date: stageInfo.follow_up_date,
+  };
+};
+
 module.exports = {
   assignProjectsToCpLead,
   getLeadProjects,
   getLeadBstAssignment,
   getCpAssignedProjectsView,
   getBstAssignedCpLeadsView,
+  getCpLeadStageForChannelPartnerUser,
+  assertBstCanManageChannelPartner,
+  updateCpLeadFieldsForChannelPartnerUser,
+  updateCpLeadStageForChannelPartnerUser,
+  attachCpLeadStageToUserPayload,
+  CP_LEAD_STAGES,
 };

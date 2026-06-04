@@ -21,6 +21,11 @@ const {
     getBstAssignedChannelPartnersView,
     getBstCpProjectMap,
 } = require("../services/channel/channelPartnerProjectService");
+const {
+    assertBstCanManageChannelPartner,
+    updateCpLeadFieldsForChannelPartnerUser,
+    attachCpLeadStageToUserPayload,
+} = require("../services/channel/cpLeadProjectService");
 const { log } = require("console");
 const axios = require("axios");
 require("dotenv").config();
@@ -1920,6 +1925,17 @@ exports.updateUser = async (req, res) => {
             dbUserData.report_to = null;
         }
 
+        const stageFromPayload = dbUserData.stage;
+        const stageRemarks =
+            dbUserData.stage_remarks !== undefined
+                ? dbUserData.stage_remarks
+                : undefined;
+        const followUpFromPayload = dbUserData.follow_up_date;
+        delete dbUserData.stage;
+        delete dbUserData.stage_remarks;
+        delete dbUserData.cpl_id;
+        delete dbUserData.follow_up_date;
+
         // Find user in admin
         let userData = await db.clients.findOne({
             where: {
@@ -1942,6 +1958,68 @@ exports.updateUser = async (req, res) => {
         });
         if (!userDataInDB) {
             return res.status(400).json({ status: 400, message: "User not found in tenant database" });
+        }
+
+        const isBstUpdater = !req.user?.isDB && Number(req.user?.role_id) === 2;
+        const cpLeadRemarks =
+            stageRemarks !== undefined ? stageRemarks : dbUserData.remarks;
+        const hasCpLeadFieldUpdate =
+            (stageFromPayload !== undefined && stageFromPayload !== null && String(stageFromPayload).trim() !== "")
+            || dbUserData.remarks !== undefined
+            || stageRemarks !== undefined
+            || followUpFromPayload !== undefined;
+
+        // BST: may only update stage / remarks / follow-up for CPs they manage
+        if (isBstUpdater) {
+            if (Number(userDataInDB.role_id) !== 1) {
+                return await responseError(req, res, "BST can only update Channel Partner users");
+            }
+
+            const access = await assertBstCanManageChannelPartner(
+                req.config,
+                req.user.user_id,
+                userDataInDB
+            );
+            if (!access.ok) {
+                return await responseError(req, res, access.message);
+            }
+
+            if (!hasCpLeadFieldUpdate && dbUserData.remarks === undefined) {
+                return await responseError(
+                    req,
+                    res,
+                    "Provide stage, remarks, stage_remarks, and/or follow_up_date to update"
+                );
+            }
+
+            if (hasCpLeadFieldUpdate) {
+                const leadUpdate = await updateCpLeadFieldsForChannelPartnerUser(
+                    req.config,
+                    userDataInDB,
+                    {
+                        stage: stageFromPayload,
+                        remarks: cpLeadRemarks,
+                        follow_up_date: followUpFromPayload,
+                    }
+                );
+                if (!leadUpdate.ok) {
+                    return await responseError(req, res, leadUpdate.message);
+                }
+            }
+
+            const userPatch = {};
+            if (dbUserData.remarks !== undefined) {
+                userPatch.remarks = dbUserData.remarks;
+            }
+            if (Object.keys(userPatch).length) {
+                data = await userDataInDB.update(userPatch);
+            } else {
+                await userDataInDB.reload();
+                data = userDataInDB;
+            }
+
+            const responseData = await attachCpLeadStageToUserPayload(req.config, data);
+            return res.status(200).json({ status: 200, message, data: responseData });
         }
 
         // Channel partner project assignment mode:
@@ -1969,6 +2047,21 @@ exports.updateUser = async (req, res) => {
         // Update user profile - only include profile-specific fields
         data = await userDataInDB.update(dbUserData);
 
+        if (userDataInDB.role_id === 1 && hasCpLeadFieldUpdate) {
+            const leadUpdate = await updateCpLeadFieldsForChannelPartnerUser(
+                req.config,
+                userDataInDB,
+                {
+                    stage: stageFromPayload,
+                    remarks: cpLeadRemarks,
+                    follow_up_date: followUpFromPayload,
+                }
+            );
+            if (!leadUpdate.ok) {
+                return await responseError(req, res, leadUpdate.message);
+            }
+        }
+
         // Filter to only include profile fields
         const profileFields = ['div_id', 'dep_id', 'des_id', 'aadhar_no', 'aadhar_file', 
             'pan_no', 'pan_file', 'dl_no', 'dl_file', 'rera_no', 'rera_file', 
@@ -1992,7 +2085,10 @@ exports.updateUser = async (req, res) => {
         }
 
         if (dbUserData.isAssigned == true) {
-            return res.status(200).json({ status: 200, message, data });
+            const responseData = userDataInDB.role_id === 1
+                ? await attachCpLeadStageToUserPayload(req.config, data)
+                : (data?.toJSON ? data.toJSON() : data);
+            return res.status(200).json({ status: 200, message, data: responseData });
         }
 
         // Update user permissions
@@ -2004,7 +2100,11 @@ exports.updateUser = async (req, res) => {
             where: { user_code: dbUserData.user_code },
         });
 
-        return res.status(200).json({ status: 200, message, data });
+        const responseData = userDataInDB.role_id === 1
+            ? await attachCpLeadStageToUserPayload(req.config, data)
+            : (data?.toJSON ? data.toJSON() : data);
+
+        return res.status(200).json({ status: 200, message, data: responseData });
     } catch (error) {
         logErrorToFile(error);
         console.log("error", error);
