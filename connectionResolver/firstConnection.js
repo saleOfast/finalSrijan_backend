@@ -136,6 +136,7 @@ exports.first = async (db_name, req, res) => {
     Userdb.leadBrokerage = require("../model/channel/brokerageModel.js")(sequelize2, DataTypes);
     Userdb.userProjectModel = require("../model/channel/userProjectModel.js")(sequelize2, DataTypes);
     Userdb.cpLeadProjects = require("../model/cpLeadProjectModel.js")(sequelize2, DataTypes);
+    Userdb.cpFollowupHistory = require("../model/cpFollowupHistoryModel.js")(sequelize2, DataTypes);
 
     Userdb.settings = require("../model/generalSettings.js")(sequelize2, DataTypes);
 

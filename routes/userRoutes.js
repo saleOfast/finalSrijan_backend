@@ -1,6 +1,7 @@
 //importing modules
 const express = require("express");
 const userController = require("../controllers/userController");
+const cpFollowupController = require("../controllers/channel/cpFollowupController");
 const { resolver } = require("../connectionResolver/resolver");
 const { rolePermission } = require("../middleware/authController");
 const router = express.Router();
@@ -85,6 +86,18 @@ router
 router
   .route("/projects/options")
   .get(resolver, userController.getChannelPartnerProjectOptions)
+
+router
+  .route("/cp-followup/activities")
+  .get(resolver, rolePermission, cpFollowupController.getCpFollowupActivities);
+
+router
+  .route("/cp-followup")
+  .post(resolver, rolePermission, cpFollowupController.recordCpFollowup);
+
+router
+  .route("/cp-followup/history")
+  .get(resolver, rolePermission, cpFollowupController.getCpFollowupHistory);
 
 router
   .route("/delete")

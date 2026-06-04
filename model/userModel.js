@@ -324,6 +324,30 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: true,
                 comment: "Stores ERP API response data (success/error) as JSON string",
             },
+
+            activity: {
+                type: DataTypes.ENUM(
+                    "OPEN",
+                    "CONTACTED",
+                    "LINK SENT",
+                    "ONBOARDED",
+                    "NOT INTERESTED",
+                    "CALL",
+                    "VISIT",
+                    "FOLLOW UP"
+                ),
+                allowNull: true,
+            },
+
+            follow_up_date: {
+                type: DataTypes.DATE,
+                allowNull: true,
+            },
+
+            follow_up_remarks: {
+                type: DataTypes.TEXT,
+                allowNull: true,
+            },
         },
         { paranoid: true, timestamps: true }
     );

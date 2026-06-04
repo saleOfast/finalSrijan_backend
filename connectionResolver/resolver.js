@@ -183,6 +183,7 @@ exports.resolver = async (req, res, next) => {
         Userdb.leadBrokerage = require("../model/channel/brokerageModel.js")(sequelize2, DataTypes);
         Userdb.userProjectModel = require("../model/channel/userProjectModel.js")(sequelize2, DataTypes);
         Userdb.cpLeadProjects = require("../model/cpLeadProjectModel.js")(sequelize2, DataTypes);
+        Userdb.cpFollowupHistory = require("../model/cpFollowupHistoryModel.js")(sequelize2, DataTypes);
         
         Userdb.settings = require("../model/generalSettings.js")(sequelize2, DataTypes);
 
@@ -663,6 +664,12 @@ exports.resolver = async (req, res, next) => {
         Userdb.cpLeadProjects.belongsTo(Userdb.channelPartnerLeads, { foreignKey: 'cpl_id', as: 'cpLeadData' })
         Userdb.channelProject.hasMany(Userdb.cpLeadProjects, { foreignKey: 'project_id', as: 'cpLeadProjectList' })
         Userdb.cpLeadProjects.belongsTo(Userdb.channelProject, { foreignKey: 'project_id', as: 'projectData' })
+
+        Userdb.users.hasMany(Userdb.cpFollowupHistory, { foreignKey: 'user_id', as: 'cpFollowupHistory' })
+        Userdb.cpFollowupHistory.belongsTo(Userdb.users, { foreignKey: 'user_id', as: 'cpUser' })
+        Userdb.cpFollowupHistory.belongsTo(Userdb.users, { foreignKey: 'created_by', as: 'followupBy' })
+        Userdb.channelPartnerLeads.hasMany(Userdb.cpFollowupHistory, { foreignKey: 'cpl_id', as: 'cpFollowupHistoryByLead' })
+        Userdb.cpFollowupHistory.belongsTo(Userdb.channelPartnerLeads, { foreignKey: 'cpl_id', as: 'cpLeadRef' })
 
         Userdb.channelProject.belongsTo(Userdb.states, { foreignKey: 'state_id', as: 'projectState' })
         Userdb.channelProject.belongsTo(Userdb.city, { foreignKey: 'city_id', as: 'projectCity' })
