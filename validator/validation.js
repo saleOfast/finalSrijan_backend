@@ -1,4 +1,10 @@
 const { body, check, validationResult, query } = require("express-validator");
+
+const hasStatusOrRemarkField = (req) =>
+  Object.prototype.hasOwnProperty.call(req.body || {}, "status") ||
+  Object.prototype.hasOwnProperty.call(req.body || {}, "remark") ||
+  Object.prototype.hasOwnProperty.call(req.body || {}, "follow_up_date");
+
 const userValidationRules = (params) => {
   switch (params) {
     case "login":
@@ -571,6 +577,23 @@ const userValidationRules = (params) => {
           .withMessage("Please enter aadhar card number")
           .matches(/^\d{12}$/)
           .withMessage("Please enter a valid 12-digit aadhar card number"),
+
+        check("status")
+          .optional()
+          .isString()
+          .withMessage("status must be a string")
+          .trim(),
+
+        check("remark")
+          .optional()
+          .isString()
+          .withMessage("remark must be a string")
+          .trim(),
+
+        check("follow_up_date")
+          .optional()
+          .matches(/^(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})$/)
+          .withMessage("follow_up_date must be in DD/MM/YYYY format"),
       ];
 
     case "editLead":
@@ -581,19 +604,23 @@ const userValidationRules = (params) => {
           .isNumeric()
           .withMessage("Please send a valid lead id"),
         check("lead_name")
+          .if((value, { req }) => !hasStatusOrRemarkField(req))
           .notEmpty()
           .withMessage("Please enter lead name")
           .matches(/^(?![\d\W]+$)[a-zA-Z\d\W]+$/)
           .withMessage("Please enter a valid lead name"),
         check("company_name")
+          .if((value, { req }) => !hasStatusOrRemarkField(req))
           .notEmpty()
           .withMessage("Please enter organisation name"),
         check("lead_status_id")
+          .if((value, { req }) => !hasStatusOrRemarkField(req))
           .notEmpty()
           .withMessage("Please choose lead status")
           .isNumeric()
           .withMessage("Please enter a valid  lead status id"),
         check("lead_owner")
+          .if((value, { req }) => !hasStatusOrRemarkField(req))
           .notEmpty()
           .withMessage("Please choose lead owner")
           .isNumeric()
@@ -615,6 +642,23 @@ const userValidationRules = (params) => {
           .withMessage("Please enter aadhar card number")
           .matches(/^\d{12}$/)
           .withMessage("Please enter a valid 12-digit aadhar card number"),
+
+        check("status")
+          .optional()
+          .isString()
+          .withMessage("status must be a string")
+          .trim(),
+
+        check("remark")
+          .optional()
+          .isString()
+          .withMessage("remark must be a string")
+          .trim(),
+
+        check("follow_up_date")
+          .optional()
+          .matches(/^(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})$/)
+          .withMessage("follow_up_date must be in DD/MM/YYYY format"),
       ];
 
     case "editLeadAssign":
@@ -1294,6 +1338,18 @@ const userValidationRules = (params) => {
           .withMessage("Please enter aadhar card number")
           .matches(/^\d{12}$/)
           .withMessage("Please enter a valid 12-digit aadhar card number"),
+
+        check("status")
+          .optional()
+          .isString()
+          .withMessage("status must be a string")
+          .trim(),
+
+        check("remark")
+          .optional()
+          .isString()
+          .withMessage("remark must be a string")
+          .trim(),
       ];
 
     case "assetCostSheetUpdate":

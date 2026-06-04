@@ -7,6 +7,7 @@ const { date } = require("joi");
 const path = require('path');
 const fs = require('fs');
 const { sendSMS } = require("../common/sms");
+const { assignProjectsToCpLead, getLeadProjects, getLeadBstAssignment } = require("../services/channel/cpLeadProjectService");
 
 // In-memory OTP store keyed by `${db_name}:${cpl_id}`
 // Value: { otp: string, expiresAt: number }
@@ -192,8 +193,30 @@ async function assignCPLeadToBST(db_name, cpl_id, state_id, city_id) {
 
 exports.addChannelPartnerLead = async (req, res) => {
     try {
-        const { db_name, first_name, last_name, contact, email, state, city, state_id, city_id } = req.body;
+        const {
+            db_name, first_name, last_name, contact, email, state, city, state_id, city_id,
+            cpl_id, project_ids, bst_id, asssigned_to,
+        } = req.body;
         if (!db_name) return responseError(req, res, "Client Not Found");
+
+        // Project + BST assignment mode:
+        // POST with cpl_id and/or project_ids and/or bst_id updates mappings and asssigned_to.
+        if (
+            cpl_id !== undefined
+            || project_ids !== undefined
+            || bst_id !== undefined
+            || asssigned_to !== undefined
+        ) {
+            const assignment = await assignProjectsToCpLead(db.sequelize, {
+                db_name,
+                cpl_id,
+                project_ids,
+                bst_id,
+                asssigned_to,
+            });
+            if (!assignment.ok) return responseError(req, res, assignment.message);
+            return responseSuccess(req, res, "Projects and BST assigned to CP lead successfully", assignment.data);
+        }
 
         // Frontend now sends state_id and city_id, so prioritize those
         let finalStateId = state_id ? parseInt(state_id) : null;
@@ -379,7 +402,7 @@ exports.addChannelPartnerLead = async (req, res) => {
         });
 
         // Automatically assign BST based on state_id and city_id (ID-based round-robin assignment)
-        await assignCPLeadToBST(db_name, newLead, finalStateId, finalCityId);
+        // await assignCPLeadToBST(db_name, newLead, finalStateId, finalCityId);
 
         return responseSuccess(req, res, "You Have Registered Successfully");
 
@@ -387,6 +410,314 @@ exports.addChannelPartnerLead = async (req, res) => {
         logErrorToFile(error);
         console.error("Error adding channel partner lead:", error);
         return responseError(req, res, "Something Went Wrong");
+    }
+};
+
+exports.getCpLeadSelectedProjects = async (req, res) => {
+    try {
+        const { db_name, cpl_id } = req.query;
+
+        if (!db_name) {
+            return await responseError(req, res, "Client Database Name is Required");
+        }
+        if (!/^[A-Za-z0-9_]+$/.test(String(db_name).trim())) {
+            return await responseError(req, res, "Invalid db_name");
+        }
+
+        const parsedCplId = Number(cpl_id);
+        if (!Number.isInteger(parsedCplId) || parsedCplId <= 0) {
+            return await responseError(req, res, "cpl_id is required and must be a valid number");
+        }
+
+        const lead = await db.sequelize.query(
+            `
+                SELECT cpl_id
+                FROM ${db_name}.db_channel_partner_leads
+                WHERE cpl_id = :cpl_id
+                  AND deletedAt IS NULL
+                LIMIT 1
+            `,
+            {
+                replacements: { cpl_id: parsedCplId },
+                type: db.sequelize.QueryTypes.SELECT,
+            }
+        );
+
+        if (!lead[0]) {
+            return await responseError(req, res, "No Lead Found with the Provided CPL ID");
+        }
+
+        const dbPrefix = `${db_name}.`;
+        const assigned_projects = await getLeadProjects(db.sequelize, parsedCplId, dbPrefix);
+        const bstAssignment = await getLeadBstAssignment(db.sequelize, dbPrefix, parsedCplId);
+        return await responseSuccess(req, res, "CP lead selected projects fetched successfully", {
+            cpl_id: parsedCplId,
+            project_ids: assigned_projects.map((p) => Number(p.project_id)),
+            assigned_projects,
+            asssigned_to: bstAssignment.asssigned_to,
+            assigned_bst: bstAssignment.assigned_bst,
+        });
+    } catch (error) {
+        logErrorToFile(error);
+        console.error(error);
+        return await responseError(req, res, "Something Went Wrong");
+    }
+};
+
+exports.getCpLeadProjectOptions = async (req, res) => {
+    try {
+        const { db_name, cpl_id } = req.query;
+        const parseBstIds = (raw) => {
+            if (raw === undefined || raw === null || raw === "") return [];
+            let values = raw;
+            if (typeof values === "string") {
+                const trimmed = values.trim();
+                if (!trimmed) return [];
+                try {
+                    values = JSON.parse(trimmed);
+                } catch (_e) {
+                    values = trimmed.split(",");
+                }
+            }
+            if (!Array.isArray(values)) values = [values];
+            return [...new Set(
+                values
+                    .map((v) => Number(String(v).trim()))
+                    .filter((n) => Number.isInteger(n) && n > 0)
+            )];
+        };
+
+        if (!db_name) {
+            return await responseError(req, res, "Client Database Name is Required");
+        }
+        if (!/^[A-Za-z0-9_]+$/.test(String(db_name).trim())) {
+            return await responseError(req, res, "Invalid db_name");
+        }
+
+        const projects = await db.sequelize.query(
+            `
+                SELECT project_id, project, state_id, city_id, zone, bst
+                FROM ${db_name}.db_channel_projects
+                WHERE deletedAt IS NULL
+                ORDER BY project ASC
+            `,
+            { type: db.sequelize.QueryTypes.SELECT }
+        );
+
+        let selectedProjectIds = [];
+        let parsedCplId = null;
+
+        if (cpl_id !== undefined && cpl_id !== null && cpl_id !== "") {
+            parsedCplId = Number(cpl_id);
+            if (!Number.isInteger(parsedCplId) || parsedCplId <= 0) {
+                return await responseError(req, res, "cpl_id must be a valid number");
+            }
+
+            const lead = await db.sequelize.query(
+                `
+                    SELECT cpl_id, asssigned_to
+                    FROM ${db_name}.db_channel_partner_leads
+                    WHERE cpl_id = :cpl_id
+                      AND deletedAt IS NULL
+                    LIMIT 1
+                `,
+                {
+                    replacements: { cpl_id: parsedCplId },
+                    type: db.sequelize.QueryTypes.SELECT,
+                }
+            );
+
+            if (!lead[0]) {
+                return await responseError(req, res, "No Lead Found with the Provided CPL ID");
+            }
+
+            const selectedRows = await db.sequelize.query(
+                `
+                    SELECT project_id
+                    FROM ${db_name}.cp_lead_projects
+                    WHERE cpl_id = :cpl_id
+                      AND deletedAt IS NULL
+                `,
+                {
+                    replacements: { cpl_id: parsedCplId },
+                    type: db.sequelize.QueryTypes.SELECT,
+                }
+            );
+
+            selectedProjectIds = selectedRows
+                .map((row) => Number(row.project_id))
+                .filter((id) => Number.isInteger(id) && id > 0);
+        }
+
+        const stateIds = [...new Set(
+            projects
+                .map((project) => Number(project.state_id))
+                .filter((id) => Number.isInteger(id) && id > 0)
+        )];
+        const cityIds = [...new Set(
+            projects
+                .map((project) => Number(project.city_id))
+                .filter((id) => Number.isInteger(id) && id > 0)
+        )];
+        const allBstIds = [...new Set(
+            projects.flatMap((project) => parseBstIds(project.bst))
+        )];
+
+        const [stateRows, cityRows, bstUsers] = await Promise.all([
+            stateIds.length
+                ? db.sequelize.query(
+                    `
+                        SELECT state_id, state_name
+                        FROM ${db_name}.db_states
+                        WHERE state_id IN (:state_ids)
+                    `,
+                    {
+                        replacements: { state_ids: stateIds },
+                        type: db.sequelize.QueryTypes.SELECT,
+                    }
+                )
+                : [],
+            cityIds.length
+                ? db.sequelize.query(
+                    `
+                        SELECT city_id, city_name
+                        FROM ${db_name}.db_cities
+                        WHERE city_id IN (:city_ids)
+                    `,
+                    {
+                        replacements: { city_ids: cityIds },
+                        type: db.sequelize.QueryTypes.SELECT,
+                    }
+                )
+                : [],
+            allBstIds.length
+                ? db.sequelize.query(
+                    `
+                        SELECT user_id, user, user_l_name, state_id, city_id, zone
+                        FROM ${db_name}.db_users
+                        WHERE user_id IN (:bst_ids)
+                          AND role_id = 2
+                          AND deletedAt IS NULL
+                    `,
+                    {
+                        replacements: { bst_ids: allBstIds },
+                        type: db.sequelize.QueryTypes.SELECT,
+                    }
+                )
+                : [],
+        ]);
+
+        const stateMap = new Map(
+            stateRows.map((row) => [Number(row.state_id), row.state_name || null])
+        );
+        const cityMap = new Map(
+            cityRows.map((row) => [Number(row.city_id), row.city_name || null])
+        );
+
+        // Also resolve BST state/city names using BST user profile state_id/city_id.
+        const bstStateIds = [...new Set(
+            bstUsers
+                .map((user) => Number(user.state_id))
+                .filter((id) => Number.isInteger(id) && id > 0 && !stateMap.has(id))
+        )];
+        const bstCityIds = [...new Set(
+            bstUsers
+                .map((user) => Number(user.city_id))
+                .filter((id) => Number.isInteger(id) && id > 0 && !cityMap.has(id))
+        )];
+
+        if (bstStateIds.length || bstCityIds.length) {
+            const [extraStateRows, extraCityRows] = await Promise.all([
+                bstStateIds.length
+                    ? db.sequelize.query(
+                        `
+                            SELECT state_id, state_name
+                            FROM ${db_name}.db_states
+                            WHERE state_id IN (:state_ids)
+                        `,
+                        {
+                            replacements: { state_ids: bstStateIds },
+                            type: db.sequelize.QueryTypes.SELECT,
+                        }
+                    )
+                    : [],
+                bstCityIds.length
+                    ? db.sequelize.query(
+                        `
+                            SELECT city_id, city_name
+                            FROM ${db_name}.db_cities
+                            WHERE city_id IN (:city_ids)
+                        `,
+                        {
+                            replacements: { city_ids: bstCityIds },
+                            type: db.sequelize.QueryTypes.SELECT,
+                        }
+                    )
+                    : [],
+            ]);
+
+            extraStateRows.forEach((row) => {
+                stateMap.set(Number(row.state_id), row.state_name || null);
+            });
+            extraCityRows.forEach((row) => {
+                cityMap.set(Number(row.city_id), row.city_name || null);
+            });
+        }
+
+        const bstMap = new Map();
+        bstUsers.forEach((user) => {
+            const id = Number(user.user_id);
+            if (!Number.isInteger(id) || id <= 0) return;
+            const name = [user.user, user.user_l_name].filter(Boolean).join(" ").trim() || null;
+            bstMap.set(id, {
+                user_id: id,
+                name,
+                state: stateMap.get(Number(user.state_id)) || null,
+                city: cityMap.get(Number(user.city_id)) || null,
+                zone: user.zone || null,
+            });
+        });
+
+        const selectedSet = new Set(selectedProjectIds);
+        const project_options = projects.map((project) => {
+            const ids = parseBstIds(project.bst);
+            const bst_users = ids
+                .map((id) => bstMap.get(Number(id)))
+                .filter(Boolean);
+            const bst_names = bst_users
+                .map((user) => user.name)
+                .filter(Boolean);
+            const { bst: _bstOmit, ...projectData } = project;
+            return {
+                ...projectData,
+                state_name: stateMap.get(Number(project.state_id)) || null,
+                city_name: cityMap.get(Number(project.city_id)) || null,
+                is_selected: selectedSet.has(Number(project.project_id)),
+                bst_ids: ids,
+                bst_names,
+                bst_users,
+            };
+        });
+
+        let asssigned_to = null;
+        let assigned_bst = null;
+        if (parsedCplId) {
+            const bstAssignment = await getLeadBstAssignment(db.sequelize, `${db_name}.`, parsedCplId);
+            asssigned_to = bstAssignment.asssigned_to;
+            assigned_bst = bstAssignment.assigned_bst;
+        }
+
+        return await responseSuccess(req, res, "CP lead project options fetched successfully", {
+            cpl_id: parsedCplId,
+            project_ids: selectedProjectIds,
+            asssigned_to,
+            assigned_bst,
+            project_options,
+        });
+    } catch (error) {
+        logErrorToFile(error);
+        console.error(error);
+        return await responseError(req, res, "Something Went Wrong");
     }
 };
 
@@ -494,12 +825,22 @@ exports.getChannelPartnerLeads = async (req, res) => {
             leads = singleLead;
         }
         else if (bst_id) {
+            // Leads explicitly assigned to this BST, OR leads tied to a project that lists this BST in project.bst
             let getAllLeadsQuery = `
-                SELECT leads.*, users.user_id, users.user, users.user_status 
-                FROM ${db_name}.db_channel_partner_leads as leads
-                LEFT JOIN ${db_name}.db_users as users
-                ON leads.asssigned_to = users.user_id
-                WHERE leads.asssigned_to = :bst_id ${statusFilter} ${dateFilter}
+                SELECT DISTINCT leads.*, users.user_id, users.user, users.user_status
+                FROM ${db_name}.db_channel_partner_leads AS leads
+                LEFT JOIN ${db_name}.db_users AS users ON leads.asssigned_to = users.user_id
+                LEFT JOIN ${db_name}.cp_lead_projects AS clp ON clp.cpl_id = leads.cpl_id AND clp.deletedAt IS NULL
+                LEFT JOIN ${db_name}.db_channel_projects AS p ON p.project_id = clp.project_id AND p.deletedAt IS NULL
+                WHERE leads.deletedAt IS NULL ${statusFilter} ${dateFilter}
+                  AND (
+                    leads.asssigned_to = :bst_id
+                    OR JSON_CONTAINS(
+                      COALESCE(NULLIF(p.bst, ''), '[]'),
+                      CAST(:bst_id AS JSON),
+                      '$'
+                    )
+                  )
                 ORDER BY leads.createdAt DESC
             `;
 
@@ -521,6 +862,25 @@ exports.getChannelPartnerLeads = async (req, res) => {
                     ORDER BY leads.createdAt DESC
                 `;
 
+            } else if (Number(req.user.role_id) === 2) {
+                // BST: see leads assigned to them OR any lead with a mapped project that includes this BST in project.bst
+                getAllLeadsQuery = `
+                    SELECT DISTINCT leads.*, users.user_id, users.user, users.user_status
+                    FROM ${db_name}.db_channel_partner_leads AS leads
+                    LEFT JOIN ${db_name}.db_users AS users ON leads.asssigned_to = users.user_id
+                    LEFT JOIN ${db_name}.cp_lead_projects AS clp ON clp.cpl_id = leads.cpl_id AND clp.deletedAt IS NULL
+                    LEFT JOIN ${db_name}.db_channel_projects AS p ON p.project_id = clp.project_id AND p.deletedAt IS NULL
+                    WHERE leads.deletedAt IS NULL ${statusFilter} ${dateFilter}
+                      AND (
+                        leads.asssigned_to = :user_id
+                        OR JSON_CONTAINS(
+                          COALESCE(NULLIF(p.bst, ''), '[]'),
+                          CAST(:user_id AS JSON),
+                          '$'
+                        )
+                      )
+                    ORDER BY leads.createdAt DESC
+                `;
             } else {
                 getAllLeadsQuery = `
                     SELECT leads.*, users.user_id, users.user, users.user_status  
@@ -536,6 +896,60 @@ exports.getChannelPartnerLeads = async (req, res) => {
                 replacements: { user_id: req.user.user_id, f_date, t_date, status_id },
                 type: db.sequelize.QueryTypes.SELECT
             });
+        }
+
+        // Enrich CP leads with assigned project list from cp_lead_projects mapping.
+        if (Array.isArray(leads) && leads.length) {
+            const cplIds = [...new Set(
+                leads
+                    .map((lead) => Number(lead.cpl_id))
+                    .filter((id) => Number.isInteger(id) && id > 0)
+            )];
+
+            if (cplIds.length) {
+                const leadProjects = await db.sequelize.query(
+                    `
+                        SELECT
+                            clp.cpl_id,
+                            p.project_id,
+                            p.project,
+                            p.state_id,
+                            p.city_id,
+                            p.zone
+                        FROM ${db_name}.cp_lead_projects clp
+                        INNER JOIN ${db_name}.db_channel_projects p
+                            ON p.project_id = clp.project_id
+                            AND p.deletedAt IS NULL
+                        WHERE clp.cpl_id IN (:cpl_ids)
+                          AND clp.deletedAt IS NULL
+                        ORDER BY p.project ASC
+                    `,
+                    {
+                        replacements: { cpl_ids: cplIds },
+                        type: db.sequelize.QueryTypes.SELECT,
+                    }
+                );
+
+                const projectMap = new Map();
+                leadProjects.forEach((row) => {
+                    const key = Number(row.cpl_id);
+                    if (!projectMap.has(key)) projectMap.set(key, []);
+                    projectMap.get(key).push({
+                        project_id: row.project_id,
+                        project: row.project,
+                        state_id: row.state_id,
+                        city_id: row.city_id,
+                        zone: row.zone,
+                    });
+                });
+
+                leads = leads.map((lead) => ({
+                    ...lead,
+                    assigned_projects: projectMap.get(Number(lead.cpl_id)) || [],
+                }));
+            } else {
+                leads = leads.map((lead) => ({ ...lead, assigned_projects: [] }));
+            }
         }
 
         return await responseSuccess(req, res, "Leads Retrieved Successfully", leads);

@@ -4,13 +4,16 @@
   "main": "index.js",
   "scripts": {
     "start": "nodemon index.js",
-    "startDev": "nodemon index.js"
+    "startDev": "nodemon index.js",
+    "migrate": "sequelize-cli db:migrate",
+    "migrate:undo": "sequelize-cli db:migrate:undo"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "eslint": "^8.39.0",
-    "nodemon": "^2.0.20"
+    "nodemon": "^2.0.20",
+    "sequelize-cli": "^6.6.2"
   },
   "dependencies": {
     "axios": "^1.6.8",

@@ -7,6 +7,52 @@ const xlsx = require('xlsx');
 
 
 const zeroPad = (num, places) => String(num).padStart(places, '0');
+
+const parseDateToDbDateOnly = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === "") return null;
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.toISOString().slice(0, 10);
+    }
+
+    const raw = String(value).trim();
+    const yyyyMmDdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (yyyyMmDdMatch) {
+        return raw;
+    }
+
+    const ddMmYyyyMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (ddMmYyyyMatch) {
+        const [, dd, mm, yyyy] = ddMmYyyyMatch;
+        const parsed = new Date(`${yyyy}-${mm}-${dd}T00:00:00.000Z`);
+        if (
+            parsed.getUTCFullYear() === Number(yyyy) &&
+            parsed.getUTCMonth() + 1 === Number(mm) &&
+            parsed.getUTCDate() === Number(dd)
+        ) {
+            return `${yyyy}-${mm}-${dd}`;
+        }
+    }
+
+    return null;
+};
+
+const formatDateToDdMmYyyy = (value) => {
+    if (!value) return value;
+    const raw = String(value).slice(0, 10);
+    const parts = raw.split("-");
+    if (parts.length !== 3) return value;
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+};
+
+const applyLeadDateFormat = (leadRecord) => {
+    if (!leadRecord) return;
+    if (leadRecord.dataValues) {
+        leadRecord.dataValues.follow_up_date = formatDateToDdMmYyyy(leadRecord.dataValues.follow_up_date);
+        return;
+    }
+    leadRecord.follow_up_date = formatDateToDdMmYyyy(leadRecord.follow_up_date);
+};
 // craete new lead
 
 exports.storeLead = async (req, res) => {
@@ -15,6 +61,17 @@ exports.storeLead = async (req, res) => {
         const OwnerDetail = await req.config.users.findByPk(req.user.user_id);
 
         let leadData = req.body
+        const parsedFollowUpDate = parseDateToDbDateOnly(leadData.follow_up_date);
+        if (leadData.follow_up_date !== undefined && parsedFollowUpDate === null) {
+            await process.rollback();
+            return await responseError(req, res, "follow_up_date must be in DD/MM/YYYY format");
+        }
+        if (leadData.follow_up_date !== undefined) {
+            leadData.follow_up_date = parsedFollowUpDate;
+        }
+        if (!leadData.status) {
+            leadData.status = "OPEN";
+        }
         let leadcount = await req.config.leads.count({ paranoid: false })
         leadData.assigned_by = req.user.user_id
         leadData.lead_code = `${req.admin.user.charAt(0).toUpperCase()}${req.admin.user_l_name ? req.admin.user_l_name.charAt(0).toUpperCase() : ''}L_${zeroPad(leadcount + 1, 5)}`
@@ -482,6 +539,12 @@ exports.getLeadList = async (req, res) => {
             })
         }
 
+        if (Array.isArray(lead)) {
+            lead.forEach(applyLeadDateFormat);
+        } else {
+            applyLeadDateFormat(lead);
+        }
+
         await responseSuccess(req, res, "lead list", lead)
     } catch (error) {
         logErrorToFile(error)
@@ -491,9 +554,33 @@ exports.getLeadList = async (req, res) => {
 }
 
 exports.editLead = async (req, res) => {
+    const requestBody = req.body || {};
+    const isStatusRemarkOrFollowUpUpdate =
+        Object.prototype.hasOwnProperty.call(requestBody, "status") ||
+        Object.prototype.hasOwnProperty.call(requestBody, "remark") ||
+        Object.prototype.hasOwnProperty.call(requestBody, "follow_up_date");
+    const isAdminOrBST =
+        req.user?.isDB === true ||
+        Number(req.user?.role_id) === 2 ||
+        Number(req.user?.role_id) === 3;
+    if (isStatusRemarkOrFollowUpUpdate && !isAdminOrBST) {
+        return res.status(403).json({
+            success: false,
+            message: "You are not authorized to update status, remark or follow_up_date",
+        });
+    }
+
     const process = await req.config.sequelize.transaction();
     try {
         let leadData = req.body
+        const parsedFollowUpDate = parseDateToDbDateOnly(leadData.follow_up_date);
+        if (leadData.follow_up_date !== undefined && parsedFollowUpDate === null) {
+            await process.rollback();
+            return await responseError(req, res, "follow_up_date must be in DD/MM/YYYY format");
+        }
+        if (leadData.follow_up_date !== undefined) {
+            leadData.follow_up_date = parsedFollowUpDate;
+        }
 
         if (leadData.loss_reason) {
             let lead = await req.config.losses.findByPk(leadData.loss_reason)

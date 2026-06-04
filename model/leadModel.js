@@ -298,6 +298,12 @@
 			allowNull: true,
 		},
 
+		// Stage text received directly from ERP payload
+		stage: {
+			type: DataTypes.STRING,
+			allowNull: true,
+		},
+
 		erp_lead_id: {
 			type: DataTypes.STRING,
 			allowNull: true,
@@ -312,6 +318,22 @@
 				key: 'user_id',
 			},
 			comment: 'Foreign key to db_users (Channel Partner) - auto-linked when ERP sends CP_Name',
+		},
+
+		status: {
+			type: DataTypes.STRING,
+			allowNull: true,
+			defaultValue: "OPEN",
+		},
+
+		follow_up_date: {
+			type: DataTypes.DATEONLY,
+			allowNull: true,
+		},
+
+		remark: {
+			type: DataTypes.TEXT,
+			allowNull: true,
 		},
 	},
 	{ paranoid: true, timestamps: true },   

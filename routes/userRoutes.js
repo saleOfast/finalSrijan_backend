@@ -79,6 +79,14 @@ router
   .get(resolver, userController.getUsersByRoleID)
 
 router
+  .route("/bst/active")
+  .get(resolver, userController.getActiveBSTList)
+
+router
+  .route("/projects/options")
+  .get(resolver, userController.getChannelPartnerProjectOptions)
+
+router
   .route("/delete")
   .put(resolver, userController.deleteUserByID)
 

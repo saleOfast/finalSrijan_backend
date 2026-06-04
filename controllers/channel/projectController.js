@@ -127,18 +127,65 @@ const sendProjectNotificationEmails = async (req, projectData) => {
     }
 };
 
+const channelProjectLocationInclude = (config) => [
+    { model: config.states, as: "projectState", attributes: ["state_id", "state_name", "country_id"] },
+    { model: config.city, as: "projectCity", attributes: ["city_id", "city_name", "state_id"] },
+];
+
+const normalizeProjectBody = (body) => {
+    const next = { ...body };
+    if (next.project_name != null && next.project == null) {
+        next.project = next.project_name;
+    }
+    return next;
+};
+
+const toNullableInt = (v) => {
+    if (v === "" || v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+};
+
+async function validateProjectStateCity(req, stateRaw, cityRaw) {
+    const state_id = toNullableInt(stateRaw);
+    const city_id = toNullableInt(cityRaw);
+    if (!state_id && !city_id) return { ok: true, state_id, city_id };
+    if (city_id && !state_id) {
+        return { ok: false, msg: "state_id is required when city_id is provided" };
+    }
+    const state = await req.config.states.findByPk(state_id);
+    if (!state) return { ok: false, msg: "Invalid state_id" };
+    if (!city_id) return { ok: true, state_id, city_id: null };
+    const city = await req.config.city.findByPk(city_id);
+    if (!city) return { ok: false, msg: "Invalid city_id" };
+    if (Number(city.state_id) !== Number(state_id)) {
+        return { ok: false, msg: "Selected city does not belong to the selected state" };
+    }
+    return { ok: true, state_id, city_id };
+}
+
 // for admin
 exports.storeChannelProject = async(req, res) => {
     try {
-        let {project} = req.body
+        let body = normalizeProjectBody({
+            ...req.body,
+            status: true,
+            created_by: req.user.user_id,
+        });
+        const { project } = body;
+        if (project == null || String(project).trim() === "") {
+            return await responseError(req, res, "project or project_name is required");
+        }
         let projectData;
 
-        projectData = await req.config.channelProject.findOne({where:{project:project
-        }})
+        projectData = await req.config.channelProject.findOne({ where: { project } });
 
-        if(projectData) return await responseError(req, res, "project name already exist")
+        if (projectData) return await responseError(req, res, "project name already exist")
 
-        let body = {...req.body, status:true, created_by: req.user.user_id}
+        const locCheck = await validateProjectStateCity(req, body.state_id, body.city_id);
+        if (!locCheck.ok) return await responseError(req, res, locCheck.msg);
+        body.state_id = locCheck.state_id;
+        body.city_id = locCheck.city_id;
 
         if (req.files && req.files.file) {
             req.body._imageName = 0
@@ -159,6 +206,7 @@ exports.storeChannelProject = async(req, res) => {
         }
 
         delete body.project_id
+        delete body.project_name
         console.log("body",body)
 
         projectData =  await req.config.channelProject.create(body)
@@ -226,15 +274,25 @@ exports.storeUserChannelTemplate = async(req, res) => {
 exports.getChannelProject = async(req, res) =>{
     try {
         let projectData ;
+        const locInc = channelProjectLocationInclude(req.config);
         if(req.query.project_id){
             if(req.user.isDB){
-                projectData = await req.config.channelProject.findByPk(req.query.project_id)
+                projectData = await req.config.channelProject.findByPk(req.query.project_id, {
+                    include: locInc,
+                })
             }else{
                 projectData = await req.config.userProjectModel.findOne({
-                    where: {project_id: req.query.project_id, created_by: req.user.user_id}
+                    where: {project_id: req.query.project_id, created_by: req.user.user_id},
+                    include: [{
+                        model: req.config.channelProject,
+                        as: "channelProjectData",
+                        include: locInc,
+                    }],
                 })
                 if(!projectData){
-                    projectData = await req.config.channelProject.findByPk(req.query.project_id)
+                    projectData = await req.config.channelProject.findByPk(req.query.project_id, {
+                        include: locInc,
+                    })
                 }
             }
             let htmlTemplate = ''
@@ -253,7 +311,10 @@ exports.getChannelProject = async(req, res) =>{
             
             return await responseSuccess(req, res, "project Data", {projectData, htmlTemplate})
         }else{
-            projectData = await req.config.channelProject.findAll({ })
+            projectData = await req.config.channelProject.findAll({
+                include: locInc,
+                order: [["project_id", "DESC"]],
+            })
             return await responseSuccess(req, res, "project list", projectData)
         }
        
@@ -269,16 +330,32 @@ exports.editChannelProject = async(req, res) =>{
     try {
 
         let {project , project_id} = req.body
-        let body = req.body
+        let body = normalizeProjectBody({ ...req.body })
 
         let CurrentProjectData = await req.config.channelProject.findByPk(project_id)
         if(!CurrentProjectData) return await responseError(req, res, "project not found") 
 
-        if(project) {
+        const mergedStateId = Object.prototype.hasOwnProperty.call(req.body, "state_id")
+            ? body.state_id
+            : CurrentProjectData.state_id;
+        const mergedCityId = Object.prototype.hasOwnProperty.call(req.body, "city_id")
+            ? body.city_id
+            : CurrentProjectData.city_id;
+        const locCheck = await validateProjectStateCity(req, mergedStateId, mergedCityId);
+        if (!locCheck.ok) return await responseError(req, res, locCheck.msg);
+        if (Object.prototype.hasOwnProperty.call(req.body, "state_id")) {
+            body.state_id = locCheck.state_id;
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "city_id")) {
+            body.city_id = locCheck.city_id;
+        }
+
+        const projectNameForDup = body.project != null ? body.project : project;
+        if(projectNameForDup) {
             let projectData = await req.config.channelProject.findOne({
                 where:{
                     project_id: {[Op.ne]: project_id},
-                    project: project
+                    project: projectNameForDup
                 }
             })
             if(projectData) return await responseError(req, res, "project name already existed") 
@@ -320,9 +397,11 @@ exports.editChannelProject = async(req, res) =>{
             await fileUpload.deleteImage(req, res, "projectHtml", 'template');
             body.logo_image = null; 
         }
-     
-            await CurrentProjectData.update(body)
-            return await responseSuccess(req, res, "project updated" , {data: req.body.template_name, file: req.body.template  })
+
+        delete body.project_name
+
+        await CurrentProjectData.update(body)
+        return await responseSuccess(req, res, "project updated" , {data: req.body.template_name, file: req.body.template  })
 
     } catch (error) {
     logErrorToFile(error)

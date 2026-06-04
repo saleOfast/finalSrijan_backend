@@ -71,6 +71,7 @@ const orderRoutes = require("./routes/dms/orderRoutes");
 
 //-----------Channel----------//
 const projectRoutes = require("./routes/channel/projectRoutes");
+const projectMasterRoutes = require("./routes/channel/projectMasterRoutes");
 const channelLeadRoutes = require("./routes/channel/leadRoutes");
 const visitRoutes = require("./routes/channel/visitRoutes");
 const bookingRoutes = require("./routes/channel/bookingRoutes");
@@ -216,6 +217,7 @@ app.use("/api/v1/db/order", orderRoutes);
 
 //-------Chnanel---------------//
 app.use("/api/v1/db/channel/project", projectRoutes)
+app.use("/api/v1/db/channel/project-master", projectMasterRoutes)
 app.use("/api/v1/db/channel/lead", channelLeadRoutes);
 app.use("/api/v1/db/channel/visit", visitRoutes);
 app.use("/api/v1/db/channel/booking", bookingRoutes);

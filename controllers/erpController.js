@@ -149,8 +149,9 @@ exports.webhookUpsertLead = async (req, res) => {
       size: payload.size || null,
       type_of_bhk: payload.type_of_bhk || null,
       lead_valid_upto: payload.lead_valid_upto || null,
+      stage: payload.stage || payload.stages || payload.lead_stage || null,
       // Default values for required fields
-      lead_stg_id: 1,
+      lead_stg_id: payload.lead_stg_id || 1,
       lead_src_id: null,
       lead_type_id: null,
       lead_status_id: null,

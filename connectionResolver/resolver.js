@@ -182,6 +182,7 @@ exports.resolver = async (req, res, next) => {
         Userdb.leadBooking = require("../model/channel/bookingModel.js")(sequelize2, DataTypes);
         Userdb.leadBrokerage = require("../model/channel/brokerageModel.js")(sequelize2, DataTypes);
         Userdb.userProjectModel = require("../model/channel/userProjectModel.js")(sequelize2, DataTypes);
+        Userdb.cpLeadProjects = require("../model/cpLeadProjectModel.js")(sequelize2, DataTypes);
         
         Userdb.settings = require("../model/generalSettings.js")(sequelize2, DataTypes);
 
@@ -657,6 +658,14 @@ exports.resolver = async (req, res, next) => {
 
         Userdb.channelProject.hasMany(Userdb.userProjectModel, { foreignKey: 'project_id', as: 'channelProjectList' })
         Userdb.userProjectModel.belongsTo(Userdb.channelProject, { foreignKey: 'project_id', as: 'channelProjectData' })
+
+        Userdb.channelPartnerLeads.hasMany(Userdb.cpLeadProjects, { foreignKey: 'cpl_id', as: 'cpLeadProjectMap' })
+        Userdb.cpLeadProjects.belongsTo(Userdb.channelPartnerLeads, { foreignKey: 'cpl_id', as: 'cpLeadData' })
+        Userdb.channelProject.hasMany(Userdb.cpLeadProjects, { foreignKey: 'project_id', as: 'cpLeadProjectList' })
+        Userdb.cpLeadProjects.belongsTo(Userdb.channelProject, { foreignKey: 'project_id', as: 'projectData' })
+
+        Userdb.channelProject.belongsTo(Userdb.states, { foreignKey: 'state_id', as: 'projectState' })
+        Userdb.channelProject.belongsTo(Userdb.city, { foreignKey: 'city_id', as: 'projectCity' })
 
         /* ------------------- CHANNEL WORK Ended ---------------------------- */
 

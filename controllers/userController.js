@@ -15,9 +15,17 @@ const { promisify } = require("util");
 const { middle } = require("../connectionResolver/middleConnection");
 const { first_small } = require("../connectionResolver/firstConnection_small");
 const { admin } = require("./dbCreateController");
+const {
+    assignProjectsToChannelPartner,
+    getCpAssignedProjectsView,
+    getBstAssignedChannelPartnersView,
+    getBstCpProjectMap,
+} = require("../services/channel/channelPartnerProjectService");
 const { log } = require("console");
 const axios = require("axios");
 require("dotenv").config();
+
+const CHANNEL_LICENSE_MIN_LIMIT = 10000;
 
 
 function getCurrentWeekStartDate() {
@@ -131,6 +139,10 @@ exports.checkplatformPermission = async (req, res) => {
                 db_name: req.user.db_name
             },
         });
+        const effectiveChannelLicenseLimit = Math.max(
+            Number(userAdminSubscriptionData?.no_of_channel_license || 0),
+            CHANNEL_LICENSE_MIN_LIMIT
+        );
 
         if (req.body.type === 'crm' && userAdminSubscriptionData.no_of_license > getData) {
             result = true
@@ -138,7 +150,7 @@ exports.checkplatformPermission = async (req, res) => {
             result = true
         } else if (req.body.type === 'sales' && userAdminSubscriptionData.no_of_sales_license > getData) {
             result = true
-        } else if (req.body.type === 'partner' && userAdminSubscriptionData.no_of_channel_license > getData) {
+        } else if (req.body.type === 'partner' && effectiveChannelLicenseLimit > getData) {
             result = true
         } else if (req.body.type === 'media' && userAdminSubscriptionData.no_of_media_license > getData) {
             result = true
@@ -160,6 +172,12 @@ exports.createUser = async (req, res) => {
     const DBprocess = await db.sequelize.transaction();
     try {
         let { email, role_id, isCRM, isDMS, isSALES, isCHANNEL, isMEDIA, cpt_id } = req.body;
+        const parsePlatformFlag = (value) => value === true || value === 1 || value === "1" || value === "true";
+        let crmEnabled = parsePlatformFlag(isCRM);
+        let dmsEnabled = parsePlatformFlag(isDMS);
+        let salesEnabled = parsePlatformFlag(isSALES);
+        let channelEnabled = parsePlatformFlag(isCHANNEL);
+        let mediaEnabled = parsePlatformFlag(isMEDIA);
 
         // Validate channel partner type id against current tenant DB
         if (cpt_id !== undefined && cpt_id !== null) {
@@ -200,6 +218,7 @@ exports.createUser = async (req, res) => {
         let userCode = randomCodeGenrator("USER");
         let userPassword = await bcrypt.hash(userCode, 10);
         let data = req.body;
+        data.zone = req.body.zone ?? null;
         data.password = userPassword;
         data.isDB = false;
         data.user_code = userCode;
@@ -247,34 +266,42 @@ exports.createUser = async (req, res) => {
             // });
 
             async function checkLicenseAvailability(type, limit, limitName) {
+                const normalizedLimit = Number(limit) || 0;
                 let availableLicenses = await giveCount(type);
-                if (availableLicenses >= limit) {
+                if (availableLicenses >= normalizedLimit) {
                     await processClient.rollback();
                     await DBprocess.rollback();
                     await processClient.cleanup();
                     await DBprocess.cleanup();
-                    return await responseError(req, res, `Cannot add more user, user count exceeds the license count. Current limit for ${limitName} is ${limit}`);
+                    await responseError(req, res, `Cannot add more user, user count exceeds the license count. Current limit for ${limitName} is ${normalizedLimit}`);
+                    return false;
                 }
+                return true;
             }
 
-            if (isCRM) {
-                await checkLicenseAvailability(1, clientAdmin.no_of_license, "CRM");
+            if (crmEnabled && !(await checkLicenseAvailability(1, clientAdmin.no_of_license, "CRM"))) {
+                return;
             }
 
-            if (isDMS) {
-                await checkLicenseAvailability(2, clientAdmin.no_of_dms_license, "DMS");
+            if (dmsEnabled && !(await checkLicenseAvailability(2, clientAdmin.no_of_dms_license, "DMS"))) {
+                return;
             }
 
-            if (isSALES) {
-                await checkLicenseAvailability(3, clientAdmin.no_of_sales_license, "SALES");
+            if (salesEnabled && !(await checkLicenseAvailability(3, clientAdmin.no_of_sales_license, "SALES"))) {
+                return;
             }
 
-            if (isCHANNEL) {
-                await checkLicenseAvailability(4, clientAdmin.no_of_channel_license, "CHANNEL");
+            const effectiveChannelLicenseLimit = Math.max(
+                Number(clientAdmin?.no_of_channel_license || 0),
+                CHANNEL_LICENSE_MIN_LIMIT
+            );
+
+            if (channelEnabled && !(await checkLicenseAvailability(4, effectiveChannelLicenseLimit, "CHANNEL"))) {
+                return;
             }
 
-            if (isMEDIA) {
-                await checkLicenseAvailability(5, clientAdmin.no_of_media_license, "MEDIA");
+            if (mediaEnabled && !(await checkLicenseAvailability(5, clientAdmin.no_of_media_license, "MEDIA"))) {
+                return;
             }
 
 
@@ -308,17 +335,17 @@ exports.createUser = async (req, res) => {
             if (role_id == 2 || role_id == 3) {
                 data.doc_verification = 2;
                 data.isCHANNEL = 1
-                isCHANNEL = 1
+                channelEnabled = true
             }
             else if (role_id == 10) {
                 data.doc_verification = 0;
                 data.isDMS = 1
-                isDMS = 1
+                dmsEnabled = true
             }
             else if (role_id == 1) {
                 data.doc_verification = 0;
                 data.isCHANNEL = 1
-                isCHANNEL = 1
+                channelEnabled = true
             } else {
                 data.doc_verification = 2;
             }
@@ -335,11 +362,11 @@ exports.createUser = async (req, res) => {
 
             // create platform permission
             let userPTdata = {
-                CRM: isCRM || false,
-                DMS: isDMS || false,
-                SALES: isSALES || false,
-                CHANNEL: isCHANNEL || false,
-                MEDIA: isMEDIA || false,
+                CRM: crmEnabled,
+                DMS: dmsEnabled,
+                SALES: salesEnabled,
+                CHANNEL: channelEnabled,
+                MEDIA: mediaEnabled,
             };
 
             // update client permission at client side
@@ -1058,7 +1085,7 @@ exports.getUsersByRoleID = async (req, res) => {
         // This ensures all onboarded CPs are visible regardless of when they were created or onboarded
 
         // BST users: Only see CP users assigned to them (report_to = BST user_id)
-        if (req.user.role_id == 2) {
+        if (req.user.role_id == 2 && Number(req.query.role_id) !== 1) {
             whereClause.report_to = req.user.user_id
         }
 
@@ -1187,6 +1214,78 @@ exports.getUsersByRoleID = async (req, res) => {
             const sortingDate = user.dataValues.onboarding_date || user.dataValues.createdAt
             return { ...user.dataValues, cp_lead_count, sortingDate };
         });
+
+        // For CP role-wise list, include project assignments.
+        if (Number(req.query.role_id) === 1 && userData.length) {
+            const cpUserIds = userData.map((u) => Number(u.user_id)).filter((id) => Number.isInteger(id) && id > 0);
+
+            if (cpUserIds.length) {
+                const projectMap = new Map();
+                if (req.user.role_id == 2) {
+                    const bstProjectMap = await getBstCpProjectMap(req.config, req.user.user_id, cpUserIds);
+                    bstProjectMap.forEach((value, key) => projectMap.set(key, value));
+                    userData = userData.filter((u) => (projectMap.get(Number(u.user_id)) || []).length > 0);
+                } else {
+                    const assignedRows = await req.config.sequelize.query(
+                        `
+                            SELECT
+                                cp.user_id AS cp_user_id,
+                                p.project_id,
+                                p.project,
+                                p.state_id,
+                                p.city_id,
+                                p.zone
+                            FROM db_users cp
+                            LEFT JOIN db_channel_partner_leads l
+                                ON l.deletedAt IS NULL
+                                AND (
+                                    (cp.email IS NOT NULL AND cp.email <> '' AND l.email = cp.email)
+                                    OR (
+                                        cp.contact_number IS NOT NULL
+                                        AND l.contact IS NOT NULL
+                                        AND RIGHT(CAST(l.contact AS CHAR), 10) = RIGHT(CAST(cp.contact_number AS CHAR), 10)
+                                    )
+                                )
+                            LEFT JOIN cp_lead_projects clp
+                                ON clp.cpl_id = l.cpl_id
+                                AND clp.deletedAt IS NULL
+                            LEFT JOIN db_channel_projects p
+                                ON p.project_id = clp.project_id
+                                AND p.deletedAt IS NULL
+                            WHERE cp.user_id IN (:cp_user_ids)
+                            ORDER BY cp.user_id DESC, p.project ASC
+                        `,
+                        {
+                            replacements: { cp_user_ids: cpUserIds },
+                            type: QueryTypes.SELECT,
+                        }
+                    );
+
+                    assignedRows.forEach((row) => {
+                        const key = Number(row.cp_user_id);
+                        if (!projectMap.has(key)) projectMap.set(key, []);
+                        if (row.project_id) {
+                            const list = projectMap.get(key);
+                            if (!list.some((p) => Number(p.project_id) === Number(row.project_id))) {
+                                list.push({
+                                    project_id: row.project_id,
+                                    project: row.project,
+                                    state_id: row.state_id,
+                                    city_id: row.city_id,
+                                    zone: row.zone,
+                                });
+                            }
+                        }
+                    });
+                }
+
+                userData = userData.map((u) => ({
+                    ...u,
+                    assigned_projects: projectMap.get(Number(u.user_id)) || [],
+                }));
+            }
+        }
+
         userData.sort((a, b) => new Date(b.sortingDate) - new Date(a.sortingDate));
         return await responseSuccess(req, res, "Role wise Data", userData);
     } catch (error) {
@@ -1229,6 +1328,17 @@ exports.deleteUserByID = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
     try {
         let userData = [];
+
+        // Role-based assignment view for CP/BST as requested.
+        if (!req.query.id && !req.user.isDB && req.user.role_id === 1) {
+            const cpView = await getCpAssignedProjectsView(req.config, req.user);
+            return await responseSuccess(req, res, "CP assigned projects", cpView);
+        }
+
+        if (!req.query.id && !req.user.isDB && req.user.role_id === 2) {
+            const bstView = await getBstAssignedChannelPartnersView(req.config, req.user);
+            return await responseSuccess(req, res, "BST assigned channel partners with projects", bstView);
+        }
 
         // for specific user detail
         if (req.query.id) {
@@ -1830,6 +1940,22 @@ exports.updateUser = async (req, res) => {
         let userDataInDB = await req.config.users.findOne({
             where: { user_code: dbUserData.user_code },
         });
+        if (!userDataInDB) {
+            return res.status(400).json({ status: 400, message: "User not found in tenant database" });
+        }
+
+        // Channel partner project assignment mode:
+        // PUT /api/v1/db/users with { user_code, project_ids: [] }
+        if (Object.prototype.hasOwnProperty.call(dbUserData, "project_ids")) {
+            const assignment = await assignProjectsToChannelPartner(req.config, {
+                user_code: dbUserData.user_code,
+                project_ids: dbUserData.project_ids,
+            });
+            if (!assignment.ok) {
+                return await responseError(req, res, assignment.message);
+            }
+            return await responseSuccess(req, res, "Channel Partner projects assigned successfully", assignment.data);
+        }
 
         if (dbUserData.report_to && userDataInDB.report_to != dbUserData.report_to) {
             const assignedUser = await req.config.users.findOne({
@@ -1889,9 +2015,16 @@ exports.updateUser = async (req, res) => {
 // Function to push CP data to ERP
 const pushCPToERP = async (req, userDataInDB, userData) => {
     try {
+        const traceId = `ERP_CP_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        console.error(`[${traceId}] pushCPToERP invoked`, {
+            user_code: userDataInDB?.user_code,
+            user_id: userDataInDB?.user_id,
+            role_id: userDataInDB?.role_id
+        });
+
         // Only push CP (role_id == 1) to ERP
         if (userDataInDB.role_id !== 1) {
-            console.log(`Skipping ERP push: User is not a CP (role_id: ${userDataInDB.role_id})`);
+            console.error(`[${traceId}] Skipping ERP push: User is not a CP (role_id: ${userDataInDB.role_id})`);
             return;
         }
 
@@ -1921,10 +2054,6 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
             }
         }
 
-        // Determine broker type based on organisation
-        // Farvision expects title-case values: "Company" or "Individual"
-        const brokerType = userDataInDB.organisation ? "Company" : "Individual";
-        
         // Build name: use only CP's personal name (user + user_l_name), no fallback
         let cpName = "";
         if (userDataInDB.user) {
@@ -1946,13 +2075,15 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
         // Extract mobile country code and number
         let mobileCountryCode = "91"; // Default for India
         let mobileNumber = userDataInDB.contact_number ? String(userDataInDB.contact_number) : "";
+        const accountType = "Broker/Agent";
+        const brokerType = "Individual";
 
         // Prepare ERP payload (defined outside try-catch for error logging)
         // Ensure all fields are strings (never null) - ERP rejects null values
         let erpPayload = {
             code: String(userDataInDB.user_code || ""),
-            accountType: "Broker",
-            brokerType: String(brokerType || "Individual"),
+            accountType: String(accountType),
+            brokerType: String(brokerType),
             name: String(cpName || ""),
             addressLine1: String(userDataInDB.address || ""),
             addressLine2: "",
@@ -2030,9 +2161,9 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
         }
         
         // Log payload for debugging BEFORE sending
-        console.log(`\n========== ERP Payload for CP ${userDataInDB.user_code} ==========`);
-        console.log(JSON.stringify(erpPayload, null, 2));
-        console.log(`========================================================\n`);
+        console.error(`\n[${traceId}] ========== ERP Payload for CP ${userDataInDB.user_code} ==========`);
+        console.error(JSON.stringify(erpPayload, null, 2));
+        console.error(`[${traceId}] ========================================================\n`);
         
         // Ensure reraDetails is always a valid array (never null)
         if (!Array.isArray(erpPayload.reraDetails)) {
@@ -2069,8 +2200,8 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
         const erpEndpoint = process.env.ERP_CP_CREATE_ENDPOINT || "https://uat.farvisioncloud.com/CRM/odata/CreateChannelPartner";
         const erpApiKey = process.env.ERP_CP_API_KEY || "2699eba8977265f8eb26eee3a9a34478e0eedcd4e96fe10884ca213ffb54a738";
         
-        console.log(`Pushing CP to ERP: ${userDataInDB.user_code} (${cpName})`);
-        console.log(`ERP Endpoint: ${erpEndpoint}`);
+        console.error(`[${traceId}] Pushing CP to ERP: ${userDataInDB.user_code} (${cpName})`);
+        console.error(`[${traceId}] ERP Endpoint: ${erpEndpoint}`);
         
         const response = await axios.post(erpEndpoint, erpPayload, {
             headers: {
@@ -2097,7 +2228,7 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
         if (responseData.status === true) {
             // Success response
             const outputList = responseData.outputList || {};
-            console.log(`✅ ERP API Success for CP ${userDataInDB.user_code}:`, {
+            console.error(`[${traceId}] ✅ ERP API Success for CP ${userDataInDB.user_code}:`, {
                 erpId: outputList.id,
                 ledgerId: outputList.ledgerId,
                 addressesId: outputList.addressesId,
@@ -2209,7 +2340,7 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
                     errorMessage = duplicateError.code || duplicateError.message || errorMessage;
                 }
                 
-                console.log(`⚠️ ERP Duplicate Record for CP ${userDataInDB.user_code}:`, {
+                console.error(`[${traceId}] ⚠️ ERP Duplicate Record for CP ${userDataInDB.user_code}:`, {
                     code: errorCode,
                     message: errorMessage,
                     existingId: outputList.id,
@@ -2232,7 +2363,7 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
                 };
             } else {
                 // Other errors
-                console.error(`❌ ERP API Error for CP ${userDataInDB.user_code}:`, {
+                console.error(`[${traceId}] ❌ ERP API Error for CP ${userDataInDB.user_code}:`, {
                     status: responseData.status,
                     errors: errorList,
                     fullResponse: responseData,
@@ -2443,6 +2574,11 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
 exports.retryPushCPToERP = async (req, res) => {
     try {
         const { user_code, user_id } = req.body;
+        console.error("[retryPushCPToERP] Request received", {
+            user_code: user_code || null,
+            user_id: user_id || null,
+            timestamp: new Date().toISOString()
+        });
 
         if (!user_code && !user_id) {
             return await responseError(req, res, "user_code or user_id is required to retry ERP push");
@@ -2465,6 +2601,12 @@ exports.retryPushCPToERP = async (req, res) => {
 
         // Call common ERP push function
         const result = await pushCPToERP(req, userDataInDB, null);
+        console.error("[retryPushCPToERP] pushCPToERP completed", {
+            user_code: userDataInDB.user_code,
+            success: result?.success === true,
+            isDuplicate: result?.isDuplicate === true,
+            error: result?.error || null
+        });
 
         if (!result || result.success === false) {
             const message = result && result.error
@@ -2557,9 +2699,19 @@ const handleAcceptProcess = async (req, userData, dbUserData) => {
 
             if (data.doc_verification == 2) {
                 // Push to ERP (non-blocking - errors are logged but don't fail onboarding)
-                pushCPToERP(req, data, userData).catch(err => {
-                    console.error(`Failed to push CP ${data.user_code} to ERP:`, err.message);
-                });
+                pushCPToERP(req, data, userData)
+                    .then((result) => {
+                        console.error("[autoPushCPToERP] pushCPToERP completed", {
+                            user_code: data.user_code,
+                            success: result?.success === true,
+                            isDuplicate: result?.isDuplicate === true,
+                            error: result?.error || null,
+                            payload: result?.payload || null
+                        });
+                    })
+                    .catch(err => {
+                        console.error(`Failed to push CP ${data.user_code} to ERP:`, err.message);
+                    });
             }
         }
     }
@@ -2764,6 +2916,274 @@ exports.deleteUser = async (req, res) => {
         return res
             .status(400)
             .json({ status: 400, message: "Something Went Wrong" });
+    }
+};
+
+exports.getActiveBSTList = async (req, res) => {
+    try {
+        const where = {
+            role_id: 2,
+            user_status: true,
+            doc_verification: 2,
+            deletedAt: null,
+        };
+
+        if (req.query.state_id) where.state_id = req.query.state_id;
+        if (req.query.city_id) where.city_id = req.query.city_id;
+
+        const users = await req.config.users.findAll({
+            where,
+            attributes: [
+                "user_id",
+                "user",
+                "user_l_name",
+                "email",
+                "contact_number",
+                "report_to",
+                "state_id",
+                "city_id",
+                "zone",
+            ],
+            order: [["user", "ASC"]],
+        });
+
+        return await responseSuccess(req, res, "Active BST list", users);
+    } catch (error) {
+        logErrorToFile(error);
+        return await responseError(req, res, "Something Went Wrong");
+    }
+};
+
+exports.getChannelPartnerProjectOptions = async (req, res) => {
+    try {
+        const { user_code, user_id } = req.query;
+
+        const parseBstIds = (raw) => {
+            if (raw === undefined || raw === null || raw === "") return [];
+            let values = raw;
+            if (typeof values === "string") {
+                const trimmed = values.trim();
+                if (!trimmed) return [];
+                try {
+                    values = JSON.parse(trimmed);
+                } catch (_e) {
+                    values = trimmed.split(",");
+                }
+            }
+            if (!Array.isArray(values)) values = [values];
+            return [...new Set(
+                values
+                    .map((v) => Number(String(v).trim()))
+                    .filter((n) => Number.isInteger(n) && n > 0)
+            )];
+        };
+
+        const projects = await req.config.sequelize.query(
+            `
+                SELECT project_id, project, state_id, city_id, zone, bst
+                FROM db_channel_projects
+                WHERE deletedAt IS NULL
+                ORDER BY project ASC
+            `,
+            { type: QueryTypes.SELECT }
+        );
+
+        let cpUser = null;
+        let selectedProjectIds = [];
+
+        if (user_code || user_id) {
+            const where = {
+                role_id: 1,
+                deletedAt: null,
+            };
+            if (user_code) where.user_code = user_code;
+            if (user_id) {
+                const parsedUserId = Number(user_id);
+                if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) {
+                    return await responseError(req, res, "user_id must be a valid number");
+                }
+                where.user_id = parsedUserId;
+            }
+
+            cpUser = await req.config.users.findOne({
+                where,
+                attributes: ["user_id", "user_code", "email", "contact_number"],
+            });
+
+            if (!cpUser) {
+                return await responseError(req, res, "Channel Partner not found");
+            }
+
+            const directRows = await req.config.sequelize.query(
+                `
+                    SELECT project_id
+                    FROM db_user_channel_projects
+                    WHERE created_by = :cp_user_id
+                      AND deletedAt IS NULL
+                `,
+                {
+                    replacements: { cp_user_id: cpUser.user_id },
+                    type: QueryTypes.SELECT,
+                }
+            );
+
+            const leadRows = await req.config.sequelize.query(
+                `
+                    SELECT clp.project_id
+                    FROM db_channel_partner_leads l
+                    INNER JOIN cp_lead_projects clp
+                        ON clp.cpl_id = l.cpl_id
+                       AND clp.deletedAt IS NULL
+                    WHERE l.deletedAt IS NULL
+                      AND (
+                        (:email <> '' AND l.email = :email)
+                        OR (
+                            :contact IS NOT NULL
+                            AND l.contact IS NOT NULL
+                            AND RIGHT(CAST(l.contact AS CHAR), 10) = RIGHT(CAST(:contact AS CHAR), 10)
+                        )
+                      )
+                `,
+                {
+                    replacements: {
+                        email: cpUser.email || "",
+                        contact: cpUser.contact_number || null,
+                    },
+                    type: QueryTypes.SELECT,
+                }
+            );
+
+            selectedProjectIds = [...new Set(
+                [...directRows, ...leadRows]
+                    .map((row) => Number(row.project_id))
+                    .filter((id) => Number.isInteger(id) && id > 0)
+            )];
+        }
+
+        const stateIds = [...new Set(
+            projects
+                .map((project) => Number(project.state_id))
+                .filter((id) => Number.isInteger(id) && id > 0)
+        )];
+        const cityIds = [...new Set(
+            projects
+                .map((project) => Number(project.city_id))
+                .filter((id) => Number.isInteger(id) && id > 0)
+        )];
+        const allBstIds = [...new Set(
+            projects.flatMap((project) => parseBstIds(project.bst))
+        )];
+
+        const [stateRows, cityRows, bstUsers] = await Promise.all([
+            stateIds.length
+                ? req.config.states.findAll({
+                    where: { state_id: { [Op.in]: stateIds } },
+                    attributes: ["state_id", "state_name"],
+                    raw: true,
+                })
+                : [],
+            cityIds.length
+                ? req.config.city.findAll({
+                    where: { city_id: { [Op.in]: cityIds } },
+                    attributes: ["city_id", "city_name"],
+                    raw: true,
+                })
+                : [],
+            allBstIds.length
+                ? req.config.users.findAll({
+                    where: {
+                        user_id: { [Op.in]: allBstIds },
+                        role_id: 2,
+                        deletedAt: null,
+                    },
+                    attributes: ["user_id", "user", "user_l_name", "state_id", "city_id", "zone"],
+                    raw: true,
+                })
+                : [],
+        ]);
+
+        const stateMap = new Map(stateRows.map((row) => [Number(row.state_id), row.state_name || null]));
+        const cityMap = new Map(cityRows.map((row) => [Number(row.city_id), row.city_name || null]));
+
+        const bstStateIds = [...new Set(
+            bstUsers
+                .map((user) => Number(user.state_id))
+                .filter((id) => Number.isInteger(id) && id > 0 && !stateMap.has(id))
+        )];
+        const bstCityIds = [...new Set(
+            bstUsers
+                .map((user) => Number(user.city_id))
+                .filter((id) => Number.isInteger(id) && id > 0 && !cityMap.has(id))
+        )];
+
+        if (bstStateIds.length || bstCityIds.length) {
+            const [extraStateRows, extraCityRows] = await Promise.all([
+                bstStateIds.length
+                    ? req.config.states.findAll({
+                        where: { state_id: { [Op.in]: bstStateIds } },
+                        attributes: ["state_id", "state_name"],
+                        raw: true,
+                    })
+                    : [],
+                bstCityIds.length
+                    ? req.config.city.findAll({
+                        where: { city_id: { [Op.in]: bstCityIds } },
+                        attributes: ["city_id", "city_name"],
+                        raw: true,
+                    })
+                    : [],
+            ]);
+
+            extraStateRows.forEach((row) => {
+                stateMap.set(Number(row.state_id), row.state_name || null);
+            });
+            extraCityRows.forEach((row) => {
+                cityMap.set(Number(row.city_id), row.city_name || null);
+            });
+        }
+
+        const bstMap = new Map();
+        bstUsers.forEach((user) => {
+            const id = Number(user.user_id);
+            if (!Number.isInteger(id) || id <= 0) return;
+            bstMap.set(id, {
+                user_id: id,
+                name: [user.user, user.user_l_name].filter(Boolean).join(" ").trim() || null,
+                state: stateMap.get(Number(user.state_id)) || null,
+                city: cityMap.get(Number(user.city_id)) || null,
+                zone: user.zone || null,
+            });
+        });
+
+        const selectedSet = new Set(selectedProjectIds);
+        const project_options = projects.map((project) => {
+            const ids = parseBstIds(project.bst);
+            const bst_users = ids
+                .map((id) => bstMap.get(Number(id)))
+                .filter(Boolean);
+            const bst_names = bst_users.map((u) => u.name).filter(Boolean);
+            const { bst: _bstOmit, ...projectData } = project;
+            return {
+                ...projectData,
+                state_name: stateMap.get(Number(project.state_id)) || null,
+                city_name: cityMap.get(Number(project.city_id)) || null,
+                is_selected: selectedSet.has(Number(project.project_id)),
+                bst_ids: ids,
+                bst_names,
+                bst_users,
+            };
+        });
+
+        return await responseSuccess(req, res, "Channel partner project options fetched successfully", {
+            cp_user_id: cpUser ? Number(cpUser.user_id) : null,
+            user_code: cpUser ? cpUser.user_code : null,
+            project_ids: selectedProjectIds,
+            project_options,
+        });
+    } catch (error) {
+        logErrorToFile(error);
+        console.log("error", error);
+        return await responseError(req, res, "Something Went Wrong");
     }
 };
 

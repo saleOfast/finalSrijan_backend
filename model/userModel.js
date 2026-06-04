@@ -150,6 +150,11 @@ module.exports = (sequelize, DataTypes) => {
                 },
             },
 
+            zone: {
+                type: DataTypes.STRING,
+                allowNull: true,
+            },
+
             address: {
                 type: DataTypes.STRING(255),
                 allowNull: true,
