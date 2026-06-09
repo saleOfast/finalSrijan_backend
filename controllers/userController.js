@@ -2054,7 +2054,7 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
             }
         }
 
-        // Build name: use only CP's personal name (user + user_l_name), no fallback
+        // Build display name from CP's personal name (user + user_l_name), no fallback
         let cpName = "";
         if (userDataInDB.user) {
             cpName = userDataInDB.user;
@@ -2062,6 +2062,11 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
                 cpName += ` ${userDataInDB.user_l_name}`;
             }
         }
+
+        // ERP deduplicates on name; suffix user_code so same-name CPs get unique ERP records
+        const userCode = String(userDataInDB.user_code || "");
+        const erpCpName =
+            userCode && cpName ? `${cpName} [${userCode}]` : userCode || cpName;
 
         // Build RERA details array - Hardcoded value
         const reraDetails = [
@@ -2076,7 +2081,7 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
         let mobileCountryCode = "91"; // Default for India
         let mobileNumber = userDataInDB.contact_number ? String(userDataInDB.contact_number) : "";
         const accountType = "Broker/Agent";
-        const brokerType = "Individual";
+        const brokerType = "CHANNEL PARTNER";
 
         // Prepare ERP payload (defined outside try-catch for error logging)
         // Ensure all fields are strings (never null) - ERP rejects null values
@@ -2084,7 +2089,7 @@ const pushCPToERP = async (req, userDataInDB, userData) => {
             code: String(userDataInDB.user_code || ""),
             accountType: String(accountType),
             brokerType: String(brokerType),
-            name: String(cpName || ""),
+            name: String(erpCpName || ""),
             addressLine1: String(userDataInDB.address || ""),
             addressLine2: "",
             city: String(cityName || ""),

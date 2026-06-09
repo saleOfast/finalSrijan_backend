@@ -1,5 +1,5 @@
-const { Op } = require("sequelize");
 const { CP_ACTIVITY_VALUES, normalizeActivity } = require("../../constants/cpActivity");
+const { getBstCpProjectMap } = require("./channelPartnerProjectService");
 
 const parseOptionalDate = (raw) => {
   if (raw === undefined || raw === null || raw === "") return null;
@@ -35,19 +35,31 @@ const fetchCpUser = async (config, user_id) => {
   });
 };
 
+const cpLinkedToBstViaProjects = async (config, bstUserId, cpUserId) => {
+  const projectMap = await getBstCpProjectMap(config, bstUserId, [Number(cpUserId)]);
+  return (projectMap.get(Number(cpUserId)) || []).length > 0;
+};
+
 const canManageCpFollowup = async (config, actor, cpUser) => {
   if (!actor || !cpUser) return false;
   if (actor.isDB) return true;
 
   const actorRole = Number(actor.role_id);
-  const cpReportTo = Number(cpUser.report_to);
+  const actorUserId = Number(actor.user_id);
+  const cpUserId = Number(cpUser.user_id);
+  const cpReportTo =
+    cpUser.report_to === null || cpUser.report_to === undefined || cpUser.report_to === ""
+      ? null
+      : Number(cpUser.report_to);
 
   if (actorRole === 2) {
-    return cpReportTo === Number(actor.user_id);
+    if (cpReportTo === actorUserId) return true;
+    return cpLinkedToBstViaProjects(config, actorUserId, cpUserId);
   }
 
   if (actorRole === 3) {
-    if (cpReportTo === Number(actor.user_id)) return true;
+    if (cpReportTo === actorUserId) return true;
+
     const bstUsers = await config.users.findAll({
       where: {
         report_to: actor.user_id,
@@ -57,8 +69,14 @@ const canManageCpFollowup = async (config, actor, cpUser) => {
       },
       attributes: ["user_id"],
     });
-    const bstIds = new Set(bstUsers.map((u) => Number(u.user_id)));
-    return bstIds.has(cpReportTo);
+    const bstIds = bstUsers.map((u) => Number(u.user_id));
+
+    if (cpReportTo !== null && bstIds.includes(cpReportTo)) return true;
+
+    for (const bstId of bstIds) {
+      if (await cpLinkedToBstViaProjects(config, bstId, cpUserId)) return true;
+    }
+    return false;
   }
 
   return false;
@@ -101,11 +119,20 @@ const recordCpFollowup = async (config, actor, payload) => {
   const status = payload.status !== undefined ? !!payload.status : true;
   const created_by = actor?.user_id ? Number(actor.user_id) : null;
 
-  await cpUser.update({
+  const updatePayload = {
     activity,
     follow_up_date,
     follow_up_remarks: remarks,
-  });
+  };
+
+  const shouldClaimOwnership =
+    Number(actor.role_id) === 2 &&
+    (cpUser.report_to === null || cpUser.report_to === undefined || cpUser.report_to === "");
+  if (shouldClaimOwnership) {
+    updatePayload.report_to = Number(actor.user_id);
+  }
+
+  await cpUser.update(updatePayload);
 
   const historyRow = await config.cpFollowupHistory.create({
     user_id,
@@ -131,7 +158,7 @@ const recordCpFollowup = async (config, actor, payload) => {
       activity,
       follow_up_date,
       follow_up_remarks: remarks,
-      asssigned_to: cpUser.report_to,
+      report_to: updatePayload.report_to ?? cpUser.report_to,
       latest_followup: {
         cp_followup_id: historyRow.cp_followup_id,
         activity: historyRow.activity,

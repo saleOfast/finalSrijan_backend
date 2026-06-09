@@ -8,6 +8,10 @@ const router = express.Router();
 
 //admin routes
 router
+    .route("/all")
+        .get(resolver, fieldController.getAllObjectFields)
+
+router
     .route("/")
         .post(resolver,  fieldController.storeField)
         .get(resolver,  fieldController.getField)
